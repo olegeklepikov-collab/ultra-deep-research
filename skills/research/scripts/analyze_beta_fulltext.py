@@ -9,7 +9,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "src"))
@@ -61,7 +61,7 @@ def build_fulltext_prompt(plan: dict, fulltext: dict, text: str) -> str:
         "1–5 объектов с ровно claim_type (method|empirical_observation|"
         "statistical_result|hypothesis|opinion|theory|limitation), statement, quote, "
         "scope, uncertainty. statement — осторожное изложение положения статьи, "
-        "quote — дословные 5–20 слов из видимого текста; scope — к чему относится "
+        "quote — дословные 5–40 слов из видимого текста; scope — к чему относится "
         "положение; uncertainty — что не подтверждено или ограничено. Не выдумывайте "
         "числа и не называйте собственные выводы статьи независимым доказательством. "
         "Для статистического результата нужны указанные в тексте численные данные; "
@@ -113,7 +113,7 @@ def build_chunk_prompt(
 def validate_fulltext_cards(
     raw: str, *, plan: dict, fulltext: dict, text: str, usage: dict, trace: dict
 ) -> dict[str, Any]:
-    if type(raw) is not str or not 0 < len(raw) <= 5000:
+    if type(raw) is not str or not 0 < len(raw) <= 262_144:
         raise ValueError("academic_fulltext_response_invalid")
 
     def unique_pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -156,17 +156,23 @@ def validate_fulltext_cards(
                 type(item) is not str
                 or not 5 <= len(item) <= 500
                 or any(ord(char) < 32 for char in item)
-                for item in (statement, quote, scope, uncertainty)
+                for item in (statement, scope, uncertainty)
             )
-            or not 5 <= len(quote.split()) <= 20
+            or type(quote) is not str
+            or not 5 <= len(quote) <= 1500
+            or any(ord(char) < 32 for char in quote)
+            or not quote.split()
         ):
             raise ValueError("academic_fulltext_card_invalid")
+        short_quote = len(quote.split()) < 5
         aligned = (
             (quote, text.find(quote))
             if quote in text
             else _align_quote_to_source(quote, text)
         )
         exact, offset = aligned if aligned is not None else (None, None)
+        if short_quote and exact is not None and text.count(exact) != 1:
+            exact, offset = None, None
         if exact is not None:
             if exact in seen_quotes:
                 raise ValueError("academic_fulltext_duplicate_quote")
@@ -186,6 +192,8 @@ def validate_fulltext_cards(
                 "quote": exact,
                 "model_quote": quote,
                 "model_quote_sha256": hashlib.sha256(quote.encode()).hexdigest(),
+                "model_quote_word_count": len(quote.split()),
+                "model_quote_exceeds_recommended_length": len(quote.split()) > 40,
                 "quote_char_start": offset,
                 "quote_char_end": offset + len(exact)
                 if offset is not None and exact is not None
@@ -200,11 +208,15 @@ def validate_fulltext_cards(
                 "source_ref": fulltext["record_id"],
                 "evidence_grade": "unanchored_model_interpretation"
                 if exact is None
+                else "short_quote_context_insufficient"
+                if short_quote
                 else "reported_numeric_in_parsed_text_methods_tables_unverified"
                 if kind == "statistical_result"
                 else "parsed_pdf_text_layout_unverified",
                 "classification_source": "model",
                 "statement_status": "author_reported_not_independently_verified"
+                if exact is not None and not short_quote
+                else "author_reported_short_quote_context_insufficient"
                 if exact is not None
                 else "model_interpretation_quote_unverified",
             }
@@ -223,11 +235,10 @@ def validate_fulltext_cards(
     ):
         raise ValueError("academic_fulltext_model_observation_invalid")
     cost = usage.get("estimated_cost_usd")
-    if (
-        type(cost) not in (int, float)
-        or cost < 0
-        or cost > plan["limits"]["max_estimated_cost_usd"]
-    ):
+    if type(cost) not in (int, float):
+        raise ValueError("academic_fulltext_cost_invalid")
+    cost = float(cast(int | float, cost))
+    if cost < 0 or cost > plan["limits"]["max_estimated_cost_usd"]:
         raise ValueError("academic_fulltext_cost_invalid")
     return with_receipt_hash(
         {
@@ -243,6 +254,9 @@ def validate_fulltext_cards(
             "reported_statement_count": len(cards),
             "exact_quote_count": sum(card["quote"] is not None for card in cards),
             "unanchored_count": sum(card["quote"] is None for card in cards),
+            "short_quote_count": sum(
+                card["model_quote_word_count"] < 5 for card in cards
+            ),
             "accepted_claim_count": 0,
             "reported_incremental_cost_usd": cost,
             "read_scope": "all_pdf_text_with_unverified_visual_elements",
@@ -321,6 +335,9 @@ def aggregate_chunk_analyses(
             "reported_statement_count": len(cards),
             "exact_quote_count": sum(card["quote"] is not None for card in cards),
             "unanchored_count": sum(card["quote"] is None for card in cards),
+            "short_quote_count": sum(
+                card.get("model_quote_word_count", 5) < 5 for card in cards
+            ),
             "accepted_claim_count": 0,
             "reported_incremental_cost_usd": round(
                 sum(result["reported_incremental_cost_usd"] for result in results), 8
@@ -378,9 +395,24 @@ def run_chunked_analysis(
                 "chunk_text_sha256": hashlib.sha256(chunk.encode()).hexdigest(),
             },
         )
-        result = validate_fulltext_cards(
-            raw, plan=plan, fulltext=fulltext, text=chunk, usage=usage, trace=trace
-        )
+        try:
+            result = validate_fulltext_cards(
+                raw, plan=plan, fulltext=fulltext, text=chunk, usage=usage, trace=trace
+            )
+        except (ContractError, ValueError) as error:
+            write_exclusive_json(
+                chunk_dir / "failure.json",
+                {
+                    "schema_version": 1,
+                    "status": "failed_after_model_response",
+                    "reason_code": error.code
+                    if isinstance(error, ContractError)
+                    else str(error),
+                    "reconciliation_required": True,
+                    "retry_allowed": False,
+                },
+            )
+            raise
         write_exclusive_json(chunk_dir / "analysis.json", result)
         results.append(result)
         spent = round(spent + result["reported_incremental_cost_usd"], 8)
@@ -455,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         prompt = build_fulltext_prompt(plan, fulltext, text)
         output = args.output_root / f"{plan['run_id']}-academic-fulltext-analysis"
+        assert output is not None
         raw, usage, trace = run_tool_free_model(
             plan=plan,
             prompt=prompt,

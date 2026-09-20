@@ -38,6 +38,7 @@ except ImportError:
 from hermes_research_report.academic_arxiv import MAX_RAW_BYTES, acquire_arxiv_metadata
 from hermes_research_report.beta_acquisition import AcquisitionError
 from hermes_research_report.beta_modes import verify_beta_mode_plan
+from hermes_research_report.canonical import with_receipt_hash
 from hermes_research_report.errors import ContractError
 
 
@@ -120,6 +121,15 @@ def _rate_limited_fetch(
         os.close(descriptor)
 
 
+def _fetch_or_negative(
+    url: str, home: Path
+) -> tuple[tuple[int, dict[str, str], bytes, str, bool, int], str | None]:
+    try:
+        return _rate_limited_fetch(url, home), None
+    except OSError as error:
+        return (0, {}, b"", url, False, 0), type(error).__name__
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)
@@ -170,15 +180,36 @@ def main(argv: list[str] | None = None) -> int:
         previous_timer = signal.setitimer(
             signal.ITIMER_REAL, min(float(plan["limits"]["wall_seconds"]), 30.0)
         )
+        transport_error_type: str | None = None
+
+        def fetch_or_record_failure(
+            url: str,
+        ) -> tuple[int, dict[str, str], bytes, str, bool, int]:
+            nonlocal transport_error_type
+            result, transport_error_type = _fetch_or_negative(url, home)
+            return result
+
         try:
             receipt, artifacts = acquire_arxiv_metadata(
                 plan,
                 args.leaf_id,
-                fetch=lambda url: _rate_limited_fetch(url, home),
+                fetch=fetch_or_record_failure,
             )
         finally:
             signal.setitimer(signal.ITIMER_REAL, *previous_timer)
             signal.signal(signal.SIGALRM, previous_handler)
+        if transport_error_type is not None:
+            receipt = with_receipt_hash(
+                {
+                    **{
+                        key: value
+                        for key, value in receipt.items()
+                        if key != "receipt_hash"
+                    },
+                    "reason": "provider_transport_failure",
+                    "transport_error_type": transport_error_type,
+                }
+            )
         for name, payload in artifacts.items():
             write_exclusive_bytes(args.output / name, payload)
         write_exclusive_json(args.output / "capture.json", receipt)

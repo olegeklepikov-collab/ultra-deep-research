@@ -231,50 +231,62 @@ def acquire_beta_sources(
                     row["reason"] = "source_budget_exhausted"
                     break
                 extract_calls += 1
+                attempt: dict[str, Any] = {"requested_url": url, "title": title}
                 try:
-                    extract_raw = extract([url])
-                except (OSError, RuntimeError, TimeoutError, ValueError):
-                    raise AcquisitionError("extract_call_failed_or_unknown") from None
-                extract_data = _strict_json(extract_raw)
-                extract_file = (
-                    f"{leaf_id}.extract.json"
-                    if index == 1
-                    else f"{leaf_id}.extract-{index}.json"
-                )
-                files[extract_file] = extract_raw.encode("utf-8")
-                row["extract_response_sha256"] = _sha(files[extract_file])
-                matches = extract_data.get("results")
-                if type(matches) is not list or len(matches) != 1:
-                    raise AcquisitionError("extract_shape_invalid")
-                item = matches[0]
-                if (
-                    type(item) is not dict
-                    or item.get("error")
-                    or item.get("blocked_by_policy")
-                ):
-                    raise AcquisitionError("extract_source_invalid")
-                final_url, rewrite = _canonical_extracted_url(url, item.get("url"))
-                content = item.get("content")
-                if (
-                    type(content) is not str
-                    or not 40 <= len(content) <= MAX_SOURCE_CHARS
-                    or any(marker in content for marker in _TRUNCATION)
-                ):
-                    raise AcquisitionError("extract_content_invalid_or_truncated")
+                    try:
+                        extract_raw = extract([url])
+                    except (OSError, RuntimeError, TimeoutError, ValueError):
+                        raise AcquisitionError(
+                            "extract_call_failed_or_unknown"
+                        ) from None
+                    extract_file = (
+                        f"{leaf_id}.extract.json"
+                        if index == 1
+                        else f"{leaf_id}.extract-{index}.json"
+                    )
+                    files[extract_file] = extract_raw.encode("utf-8")
+                    attempt["extract_response_sha256"] = _sha(files[extract_file])
+                    row["extract_response_sha256"] = attempt["extract_response_sha256"]
+                    extract_data = _strict_json(extract_raw)
+                    matches = extract_data.get("results")
+                    if type(matches) is not list or len(matches) != 1:
+                        raise AcquisitionError("extract_shape_invalid")
+                    item = matches[0]
+                    if (
+                        type(item) is not dict
+                        or item.get("error")
+                        or item.get("blocked_by_policy")
+                    ):
+                        raise AcquisitionError("extract_source_invalid")
+                    final_url, rewrite = _canonical_extracted_url(url, item.get("url"))
+                    content = item.get("content")
+                    if (
+                        type(content) is not str
+                        or not 40 <= len(content) <= MAX_SOURCE_CHARS
+                        or any(marker in content for marker in _TRUNCATION)
+                    ):
+                        raise AcquisitionError("extract_content_invalid_or_truncated")
+                except AcquisitionError as error:
+                    attempt["status"] = "failed"
+                    attempt["reason"] = error.code
+                    attempts.append(attempt)
+                    row["candidate_attempts"] = attempts
+                    row["reason"] = error.code
+                    continue
                 source_id = "SRC-" + _sha(final_url.encode("utf-8"))[:16].upper()
                 filename = f"{source_id}.txt"
                 payload = content.encode("utf-8")
                 files[filename] = payload
                 seen_urls.add(url)
                 seen_urls.add(final_url)
-                attempt: dict[str, Any] = {
-                    "requested_url": url,
-                    "url": final_url,
-                    "source_id": source_id,
-                    "extract_response_sha256": row["extract_response_sha256"],
-                    "content_sha256": _sha(payload),
-                    "url_rewrite": rewrite,
-                }
+                attempt.update(
+                    {
+                        "url": final_url,
+                        "source_id": source_id,
+                        "content_sha256": _sha(payload),
+                        "url_rewrite": rewrite,
+                    }
+                )
                 attempts.append(attempt)
                 row["candidate_attempts"] = attempts
                 for field in (

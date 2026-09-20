@@ -57,6 +57,13 @@ def main(argv: list[str] | None = None) -> int:
         if type(attempt_value) is not dict:
             raise ValueError("model_attempt_invalid")
         attempt = attempt_value
+        historical_prompt = prompt.replace("5–40 слов", "5–20 слов")
+        prompt_used = (
+            historical_prompt
+            if attempt.get("prompt_sha256")
+            == hashlib.sha256(historical_prompt.encode("utf-8")).hexdigest()
+            else prompt
+        )
         if (
             attempt.get("status") != "started_unknown_until_reconciled"
             or attempt.get("run_id") != plan["run_id"]
@@ -65,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
             or attempt.get("source_receipt_hash") != capture["receipt_hash"]
             or attempt.get("source_id") != source_id
             or attempt.get("prompt_sha256")
-            != hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            != hashlib.sha256(prompt_used.encode("utf-8")).hexdigest()
             or attempt.get("provider") != PROVIDER
             or attempt.get("model") != MODEL
             or attempt.get("retry_allowed") is not False
@@ -96,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
             source_id=source_id,
             title=title,
             text=text,
-            prompt=prompt,
+            prompt=prompt_used,
             raw=raw,
             usage=usage_value,
             trace=trace_value,
@@ -114,6 +121,9 @@ def main(argv: list[str] | None = None) -> int:
                 "trace_file_sha256": trace_sha,
                 "prior_failure_file_sha256": failure_sha,
                 "candidate_receipt_hash": candidate["receipt_hash"],
+                "historical_quote_limit_20_to_40_regraded": prompt_used
+                == historical_prompt
+                and historical_prompt != prompt,
                 "additional_model_calls": 0,
                 "release_authorized": False,
             },

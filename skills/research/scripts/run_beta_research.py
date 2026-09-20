@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -36,12 +37,40 @@ except ImportError:
     )
     from run_beta_search import SearchRunError, _child, _receipt
 
+from hermes_research_report.beta_coverage import assess_beta_coverage
 from hermes_research_report.beta_modes import verify_beta_mode_plan
 from hermes_research_report.canonical import verify_receipt_hash, with_receipt_hash
 from hermes_research_report.errors import ContractError
 
 SCRIPTS = Path(__file__).resolve().parent
 _CODE = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
+
+
+def _planning_child(
+    command: list[str], *, timeout: float
+) -> tuple[int, dict[str, Any]]:
+    """Return a saved planning failure with its run ID for one offline replay."""
+    if timeout <= 0:
+        raise SearchRunError("profile_planning_deadline_exceeded")
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise SearchRunError("profile_planning_outcome_unknown") from None
+    try:
+        value = json.loads(
+            completed.stdout if completed.returncode == 0 else completed.stderr
+        )
+    except json.JSONDecodeError:
+        raise SearchRunError("profile_planning_response_invalid") from None
+    if type(value) is not dict or completed.returncode not in (0, 2):
+        raise SearchRunError("profile_planning_response_invalid")
+    return completed.returncode, value
 
 
 def _verify_structure_files(directory: Path, structure: dict[str, Any]) -> None:
@@ -85,11 +114,121 @@ def assemble_source_dossier(
     analysis_attempted: bool = False,
     study_graph: dict[str, Any] | None = None,
     study_graph_attempted: bool = False,
+    domain_first_requested: bool = False,
+    decomposition: dict[str, Any] | None = None,
+    coverage_frame: dict[str, Any] | None = None,
+    coverage_progress: dict[str, Any] | None = None,
+    coverage_mapping: dict[str, Any] | None = None,
+    coverage_query_progress: dict[str, Any] | None = None,
+    coverage_query_observation: dict[str, Any] | None = None,
+    coverage_cumulative_progress: dict[str, Any] | None = None,
+    adaptive_batches: list[dict[str, Any]] | None = None,
+    adaptive_attempted: bool = False,
+    adaptive_cost_usd: float | None = None,
+    preflight_cost_usd: float | None = None,
+    domain_run_id: str | None = None,
+    coverage_run_id: str | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     verified = verify_beta_mode_plan(plan)
     mode = verified["mode"]
     if mode not in {"ultra", "academic"}:
         raise ValueError("profile_mode_invalid")
+    if domain_first_requested:
+        if mode != "ultra":
+            raise ValueError("profile_domain_first_mode_invalid")
+        if decomposition is not None and domain_run_id != decomposition.get("run_id"):
+            raise ValueError("profile_domain_run_not_bound")
+        if coverage_frame is not None and coverage_run_id != coverage_frame.get(
+            "run_id"
+        ):
+            raise ValueError("profile_coverage_run_not_bound")
+        if decomposition is not None and (
+            not verify_receipt_hash(decomposition)
+            or decomposition.get("contract") != "BetaDomainDecomposition"
+            or decomposition.get("question") != verified["question"]
+            or decomposition.get("profile") != mode
+        ):
+            raise ValueError("profile_decomposition_not_bound")
+        if coverage_frame is not None and (
+            decomposition is None
+            or not verify_receipt_hash(coverage_frame)
+            or coverage_frame.get("contract") != "BetaCoverageFrame"
+            or coverage_frame.get("decomposition_receipt_hash")
+            != decomposition["receipt_hash"]
+            or coverage_frame.get("question") != verified["question"]
+        ):
+            raise ValueError("profile_coverage_not_bound")
+        if coverage_progress is not None and (
+            coverage_frame is None
+            or not verify_receipt_hash(coverage_progress)
+            or coverage_progress.get("contract") != "BetaCoverageProgressAssessment"
+            or coverage_progress.get("frame_receipt_hash")
+            != coverage_frame["receipt_hash"]
+            or coverage_progress.get("evidence_floor_count") != 0
+        ):
+            raise ValueError("profile_coverage_progress_not_bound")
+        if coverage_mapping is not None and (
+            coverage_frame is None
+            or not verify_receipt_hash(coverage_mapping)
+            or coverage_mapping.get("contract") != "BetaCoverageQueryAtomMapping"
+            or coverage_mapping.get("frame_receipt_hash")
+            != coverage_frame["receipt_hash"]
+            or coverage_mapping.get("plan_receipt_hash") != verified["receipt_hash"]
+        ):
+            raise ValueError("profile_coverage_mapping_not_bound")
+        if coverage_query_progress is not None and (
+            coverage_frame is None
+            or not verify_receipt_hash(coverage_query_progress)
+            or coverage_query_progress.get("frame_receipt_hash")
+            != coverage_frame["receipt_hash"]
+        ):
+            raise ValueError("profile_coverage_observation_not_bound")
+        if coverage_query_observation is not None and (
+            coverage_mapping is None
+            or coverage_query_progress is None
+            or not verify_receipt_hash(coverage_query_observation)
+            or coverage_query_observation.get("contract")
+            != "BetaCoverageMappedQueryObservation"
+            or coverage_query_observation.get("mapping_receipt_hash")
+            != coverage_mapping["receipt_hash"]
+            or coverage_query_observation.get("progress_receipt_hash")
+            != coverage_query_progress["receipt_hash"]
+        ):
+            raise ValueError("profile_coverage_observation_not_bound")
+        if coverage_cumulative_progress is not None and (
+            coverage_frame is None
+            or not verify_receipt_hash(coverage_cumulative_progress)
+            or coverage_cumulative_progress.get("frame_receipt_hash")
+            != coverage_frame["receipt_hash"]
+        ):
+            raise ValueError("profile_coverage_cumulative_not_bound")
+        if adaptive_batches is not None and any(
+            type(row) is not dict
+            or not verify_receipt_hash(row)
+            or row.get("contract") != "BetaAdaptiveCoverageBatchRun"
+            or coverage_frame is None
+            or row.get("frame_receipt_hash") != coverage_frame["receipt_hash"]
+            for row in adaptive_batches
+        ):
+            raise ValueError("profile_adaptive_batch_not_bound")
+    elif any(
+        value is not None
+        for value in (
+            decomposition,
+            coverage_frame,
+            coverage_progress,
+            coverage_mapping,
+            coverage_query_progress,
+            coverage_query_observation,
+            coverage_cumulative_progress,
+            adaptive_batches,
+            adaptive_cost_usd,
+            preflight_cost_usd,
+            domain_run_id,
+            coverage_run_id,
+        )
+    ):
+        raise ValueError("profile_unrequested_preflight_invalid")
     if (
         not verify_receipt_hash(planning)
         or planning.get("contract") != "BetaAutonomousPlanningRun"
@@ -263,9 +402,51 @@ def assemble_source_dossier(
         f"Режим: {mode}. Принятых исследовательских выводов: 0. Квалификация режима: нет.",
         f"Вопрос: {verified['question']}",
         "",
-        "## Исполненные поисковые листья",
-        "",
     ]
+    if domain_first_requested:
+        lines.extend(["## Предметный охват до поиска", ""])
+        if coverage_frame is None or coverage_progress is None:
+            lines.append("Предметная карта не завершена; пробел сохранён и не скрыт.")
+        else:
+            lines.append(
+                f"Предварительная карта: {coverage_progress['facet_count']} аспектов, "
+                f"{coverage_progress['branch_count']} ветвей, "
+                f"{coverage_progress['atom_count']} вопросов. "
+                "Ни один вопрос не закрыт только созданием карты или поисковым адресом."
+            )
+            lines.append(
+                "Структурные пробелы: "
+                f"{len(coverage_progress['empty_branch_ids'])} пустых ветвей; "
+                f"{len(coverage_progress['required_importance_rank_gaps'])} "
+                "недостающих уровней важности."
+            )
+            lines.append(
+                "Независимая предметная полнота и насыщение не удостоверены; "
+                "поисковая попытка не равна проверенному свидетельству."
+            )
+            final_progress = coverage_cumulative_progress or coverage_query_progress
+            observed_atoms = (
+                {row["atom_id"]: row for row in final_progress["atoms"]}
+                if final_progress is not None
+                else {}
+            )
+            for atom in coverage_frame["atoms"]:
+                query_count = observed_atoms.get(atom["atom_id"], {}).get(
+                    "query_count", 0
+                )
+                lines.append(
+                    f"- {atom['atom_id']} "
+                    f"[{coverage_frame['facet_labels'][atom['facet_id']]}; "
+                    f"{atom['importance']}/{atom['space']}]: "
+                    f"{atom['question']} — открыт; поисковых попыток: {query_count}."
+                )
+            if adaptive_batches:
+                lines.append(
+                    f"Адаптивных дополнительных партий: {len(adaptive_batches)}; "
+                    "их кандидаты не повышены до проверенных опор."
+                )
+        lines.append("")
+    lines.extend(["## Исполненные поисковые листья", ""])
     for leaf in verified["leaves"]:
         row = observed.get(leaf["leaf_id"])
         if row is None:
@@ -385,20 +566,29 @@ def assemble_source_dossier(
                 "Положения из извлечённого текста PDF; это сообщения авторов, не независимые выводы системы:"
             )
             for card in analysis["cards"]:
-                grade = (
-                    "точный фрагмент найден, но расположение и визуальные элементы не проверены"
-                    if card["quote"] is not None
-                    else "цитата модели не совпала с текстом; интерпретация не привязана точно"
-                )
-                if (
+                if card.get("evidence_grade") == "short_quote_context_insufficient":
+                    grade = (
+                        "фрагмент найден, но цитата слишком коротка для проверки всего положения; "
+                        "расположение и визуальные элементы не проверены"
+                    )
+                elif (
                     card["quote"] is not None
                     and card["claim_type"] == "statistical_result"
                 ):
                     grade = "точный фрагмент найден; числа, таблицы и метод расчёта не перепроверены"
+                elif card["quote"] is not None:
+                    grade = "точный фрагмент найден, но расположение и визуальные элементы не проверены"
+                else:
+                    grade = "цитата модели не совпала с текстом; интерпретация не привязана точно"
+                quote = card["quote"]
+                if quote is not None and len(quote.split()) > 25:
+                    matches = list(re.finditer(r"\S+", quote))
+                    quote = quote[: matches[24].end()] + " …"
+                    grade += "; показано начало длинного фрагмента"
                 lines.append(
                     f"- {kind_labels[card['claim_type']]}: {card['statement']} "
                     f"Опора: {grade}. "
-                    f"Цитата: «{card['quote'] or 'нет проверенной цитаты'}». "
+                    f"Цитата: «{quote or 'нет проверенной цитаты'}». "
                     f"Ограничение: {card['uncertainty']}"
                 )
         elif analysis_attempted:
@@ -459,10 +649,20 @@ def assemble_source_dossier(
             source_cost is not None
             and (type(source_cost) not in (int, float) or source_cost < 0)
         )
+        or (
+            preflight_cost_usd is not None
+            and (type(preflight_cost_usd) not in (int, float) or preflight_cost_usd < 0)
+        )
+        or (
+            adaptive_cost_usd is not None
+            and (type(adaptive_cost_usd) not in (int, float) or adaptive_cost_usd < 0)
+        )
     ):
         raise ValueError("profile_cost_invalid")
     cost_complete = (
         source_cost is not None
+        and (not domain_first_requested or preflight_cost_usd is not None)
+        and (not adaptive_attempted or adaptive_cost_usd is not None)
         and (not screening_attempted or screening is not None)
         and (not challenge_attempted or challenge is not None)
         and (not analysis_attempted or analysis is not None)
@@ -473,13 +673,28 @@ def assemble_source_dossier(
             + float(source_cost)
             + float(screening_cost)
             + float(challenge_cost)
-            + float(analysis_cost),
+            + float(analysis_cost)
+            + float(preflight_cost_usd or 0)
+            + float(adaptive_cost_usd or 0),
             8,
         )
         if cost_complete
         else None
     )
     workflow_gaps = []
+    if domain_first_requested:
+        if decomposition is None:
+            workflow_gaps.append("domain_decomposition")
+        if coverage_frame is None or coverage_progress is None:
+            workflow_gaps.append("coverage_frame")
+        if coverage_mapping is None:
+            workflow_gaps.append("coverage_query_mapping")
+        if coverage_query_progress is None or coverage_query_observation is None:
+            workflow_gaps.append("coverage_query_observation")
+        if adaptive_attempted and (
+            not adaptive_batches or coverage_cumulative_progress is None
+        ):
+            workflow_gaps.append("adaptive_coverage")
     if (
         execution is None
         or portfolio is None
@@ -542,6 +757,42 @@ def assemble_source_dossier(
             "status": status,
             "plan_receipt_hash": verified["receipt_hash"],
             "planning_run_receipt_hash": planning["receipt_hash"],
+            "domain_first_requested": domain_first_requested,
+            "domain_decomposition_receipt_hash": decomposition["receipt_hash"]
+            if decomposition
+            else None,
+            "coverage_frame_receipt_hash": coverage_frame["receipt_hash"]
+            if coverage_frame
+            else None,
+            "coverage_progress_receipt_hash": coverage_progress["receipt_hash"]
+            if coverage_progress
+            else None,
+            "coverage_mapping_receipt_hash": coverage_mapping["receipt_hash"]
+            if coverage_mapping
+            else None,
+            "coverage_query_progress_receipt_hash": coverage_query_progress[
+                "receipt_hash"
+            ]
+            if coverage_query_progress
+            else None,
+            "coverage_query_observation_receipt_hash": coverage_query_observation[
+                "receipt_hash"
+            ]
+            if coverage_query_observation
+            else None,
+            "coverage_cumulative_progress_receipt_hash": coverage_cumulative_progress[
+                "receipt_hash"
+            ]
+            if coverage_cumulative_progress
+            else None,
+            "adaptive_batch_receipt_hashes": [
+                row["receipt_hash"] for row in adaptive_batches or []
+            ],
+            "adaptive_attempted": adaptive_attempted,
+            "adaptive_cost_usd": adaptive_cost_usd,
+            "preflight_model_cost_usd": preflight_cost_usd,
+            "domain_run_id": domain_run_id,
+            "coverage_run_id": coverage_run_id,
             "execution_receipt_hash": execution["receipt_hash"] if execution else None,
             "portfolio_receipt_hash": portfolio["receipt_hash"] if portfolio else None,
             "academic_protocol_receipt_hash": protocol["receipt_hash"]
@@ -590,6 +841,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hermes", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--planning-dir", type=Path)
+    parser.add_argument("--domain-first", action="store_true")
+    parser.add_argument("--decomposition", type=Path)
+    parser.add_argument("--coverage-frame", type=Path)
+    parser.add_argument("--adaptive-coverage-batches", type=int)
     parser.add_argument("--public-query-ack", action="store_true")
     args = parser.parse_args(argv)
     if not args.public_query_ack:
@@ -617,6 +872,19 @@ def main(argv: list[str] | None = None) -> int:
     analysis_attempted = False
     study_graph: dict[str, Any] | None = None
     study_graph_attempted = False
+    decomposition: dict[str, Any] | None = None
+    coverage_frame: dict[str, Any] | None = None
+    coverage_progress: dict[str, Any] | None = None
+    coverage_mapping: dict[str, Any] | None = None
+    coverage_query_progress: dict[str, Any] | None = None
+    coverage_query_observation: dict[str, Any] | None = None
+    coverage_cumulative_progress: dict[str, Any] | None = None
+    adaptive_batches: list[dict[str, Any]] = []
+    adaptive_attempted = False
+    adaptive_cost_usd: float | None = None
+    domain_run_id: str | None = None
+    coverage_run_id: str | None = None
+    preflight_cost_usd: float | None = 0.0 if args.domain_first else None
     output: Path | None = None
     try:
         if (
@@ -625,23 +893,184 @@ def main(argv: list[str] | None = None) -> int:
             or not args.output_root.is_dir()
         ):
             raise ValueError("output_root_invalid")
+        if args.domain_first and args.mode != "ultra":
+            raise ValueError("domain_first_only_ultra")
+        adaptive_limit = (
+            args.adaptive_coverage_batches
+            if args.adaptive_coverage_batches is not None
+            else 1
+            if args.domain_first
+            else 0
+        )
+        if not 0 <= adaptive_limit <= 20 or (adaptive_limit and not args.domain_first):
+            raise ValueError("adaptive_coverage_budget_invalid")
+        if args.coverage_frame is not None and (
+            not args.domain_first or args.decomposition is None
+        ):
+            raise ValueError("coverage_reuse_mode_invalid")
+        if args.decomposition is not None:
+            if not args.domain_first:
+                raise ValueError("domain_reuse_mode_invalid")
+            reused, _ = load_json(args.decomposition)
+            if (
+                type(reused) is not dict
+                or not verify_receipt_hash(reused)
+                or reused.get("contract") != "BetaDomainDecomposition"
+                or reused.get("question") != args.question.strip()
+                or reused.get("profile") != args.mode
+                or args.decomposition
+                != args.output_root
+                / f"{reused['run_id']}-domain-planning/decomposition.json"
+            ):
+                raise ValueError("domain_reuse_not_bound")
+            decomposition = reused
+            domain_run_id = reused["run_id"]
+            domain_run = _receipt(
+                args.output_root / f"{domain_run_id}-domain-planning/planning-run.json",
+                "BetaDomainPlanningRun",
+                domain_run_id,
+            )
+            if domain_run.get("decomposition_receipt_hash") != reused["receipt_hash"]:
+                raise ValueError("domain_reuse_not_bound")
+            preflight_cost_usd = float(domain_run["reported_model_cost_usd"])
+        elif args.domain_first and args.planning_dir is not None:
+            raise ValueError("domain_reuse_required")
+        elif args.domain_first and args.planning_dir is None:
+            try:
+                domain_code, domain_created = _planning_child(
+                    [
+                        sys.executable,
+                        str(SCRIPTS / "plan_beta_domain.py"),
+                        "--question",
+                        args.question,
+                        "--profile",
+                        args.mode,
+                        "--hermes",
+                        str(args.hermes),
+                        "--output-root",
+                        str(args.output_root),
+                        "--public-query-ack",
+                    ],
+                    timeout=125,
+                )
+                if domain_code == 2 and type(domain_created.get("run_id")) is str:
+                    saved_id = domain_created["run_id"]
+                    if re.fullmatch(
+                        r"BETA-DOM-[0-9]{8}-[0-9]{6}-[A-F0-9]{8}", saved_id
+                    ):
+                        saved = args.output_root / f"{saved_id}-domain-planning"
+                        if all(
+                            (saved / name).is_file()
+                            for name in (
+                                "failure.json",
+                                "model.raw.json",
+                                "model-usage.json",
+                                "model-trace.json",
+                            )
+                        ):
+                            recovered_code, recovered = _child(
+                                [
+                                    sys.executable,
+                                    str(SCRIPTS / "reconcile_beta_domain.py"),
+                                    "--output",
+                                    str(saved),
+                                    "--question",
+                                    args.question,
+                                    "--profile",
+                                    args.mode,
+                                ],
+                                timeout=30,
+                            )
+                            if (
+                                recovered_code == 0
+                                and recovered.get("run_id") == saved_id
+                            ):
+                                domain_code, domain_created = 0, recovered
+                if domain_code == 0 and type(domain_created.get("run_id")) is str:
+                    domain_run_id = domain_created["run_id"]
+                    domain_dir = args.output_root / f"{domain_run_id}-domain-planning"
+                    decomposition = _receipt(
+                        domain_dir / "decomposition.json",
+                        "BetaDomainDecomposition",
+                        domain_run_id,
+                    )
+                    domain_run = _receipt(
+                        domain_dir / "planning-run.json",
+                        "BetaDomainPlanningRun",
+                        domain_run_id,
+                    )
+                    preflight_cost_usd = float(domain_run["reported_model_cost_usd"])
+            except (SearchRunError, OSError, ValueError):
+                preflight_cost_usd = None
         if args.planning_dir is None:
-            plan_code, created = _child(
-                [
-                    sys.executable,
-                    str(SCRIPTS / "plan_beta_from_question.py"),
-                    "--mode",
-                    args.mode,
-                    "--question",
-                    args.question,
-                    "--hermes",
-                    str(args.hermes),
-                    "--output-root",
-                    str(args.output_root),
-                    "--public-query-ack",
-                ],
+            planning_command = [
+                sys.executable,
+                str(SCRIPTS / "plan_beta_from_question.py"),
+                "--mode",
+                args.mode,
+                "--question",
+                args.question,
+                "--hermes",
+                str(args.hermes),
+                "--output-root",
+                str(args.output_root),
+                "--public-query-ack",
+            ]
+            if decomposition is not None and domain_run_id is not None:
+                planning_command.extend(
+                    (
+                        "--decomposition",
+                        str(
+                            args.output_root
+                            / f"{domain_run_id}-domain-planning/decomposition.json"
+                        ),
+                    )
+                )
+            plan_code, created = _planning_child(
+                planning_command,
                 timeout=75,
             )
+            if plan_code == 2 and type(created.get("run_id")) is str:
+                saved_id = created["run_id"]
+                if re.fullmatch(r"BETA-AUTO-[0-9]{8}-[0-9]{6}-[A-F0-9]{8}", saved_id):
+                    saved = args.output_root / f"{saved_id}-planning"
+                    if all(
+                        (saved / name).is_file()
+                        for name in (
+                            "failure.json",
+                            "model.raw.json",
+                            "model-usage.json",
+                            "model-trace.json",
+                        )
+                    ):
+                        recovery_command = [
+                            sys.executable,
+                            str(SCRIPTS / "reconcile_beta_plan.py"),
+                            "--output",
+                            str(saved),
+                            "--question",
+                            args.question,
+                            "--mode",
+                            args.mode,
+                        ]
+                        if decomposition is not None and domain_run_id is not None:
+                            recovery_command.extend(
+                                (
+                                    "--decomposition",
+                                    str(
+                                        args.output_root
+                                        / f"{domain_run_id}-domain-planning/decomposition.json"
+                                    ),
+                                )
+                            )
+                        recovered_code, recovered = _child(recovery_command, timeout=30)
+                        if recovered_code == 0 and recovered.get("run_id") == saved_id:
+                            plan_code = 0
+                            created = {
+                                "status": "ready_to_execute",
+                                "run_id": saved_id,
+                                "output": str(saved),
+                            }
             if (
                 plan_code != 0
                 or created.get("status") != "ready_to_execute"
@@ -677,6 +1106,217 @@ def main(argv: list[str] | None = None) -> int:
             or plan["status"] != "ready_to_execute"
         ):
             raise ValueError("profile_plan_not_executable")
+        if (
+            decomposition is not None
+            and planning.get("decomposition_receipt_hash")
+            != decomposition["receipt_hash"]
+        ):
+            raise ValueError("profile_planning_decomposition_not_bound")
+        if args.coverage_frame is not None and decomposition is not None:
+            reused_frame, _ = load_json(args.coverage_frame)
+            if (
+                type(reused_frame) is not dict
+                or not verify_receipt_hash(reused_frame)
+                or reused_frame.get("contract") != "BetaCoverageFrame"
+                or reused_frame.get("decomposition_receipt_hash")
+                != decomposition["receipt_hash"]
+                or reused_frame.get("question") != args.question.strip()
+                or reused_frame.get("profile") != args.mode
+                or args.coverage_frame
+                != args.output_root
+                / f"{reused_frame['run_id']}-coverage-planning/frame.json"
+            ):
+                raise ValueError("coverage_reuse_not_bound")
+            coverage_frame = reused_frame
+            coverage_run_id = reused_frame["run_id"]
+            coverage_run = _receipt(
+                args.output_root
+                / f"{coverage_run_id}-coverage-planning/planning-run.json",
+                "BetaCoveragePlanningRun",
+                coverage_run_id,
+            )
+            if coverage_run.get("frame_receipt_hash") != reused_frame["receipt_hash"]:
+                raise ValueError("coverage_reuse_not_bound")
+            coverage_progress = assess_beta_coverage(
+                coverage_frame, [], budget_exhausted=False
+            )
+            progress_path = (
+                args.output_root / f"{coverage_run_id}-coverage-initial-progress.json"
+            )
+            if progress_path.exists():
+                recorded, _ = load_json(progress_path)
+                if recorded != coverage_progress:
+                    raise ValueError("coverage_reuse_progress_changed")
+            else:
+                write_exclusive_json(progress_path, coverage_progress)
+            if preflight_cost_usd is not None:
+                preflight_cost_usd = round(
+                    preflight_cost_usd + float(coverage_run["reported_model_cost_usd"]),
+                    8,
+                )
+        elif args.domain_first and decomposition is not None:
+            try:
+                coverage_code, coverage_created = _planning_child(
+                    [
+                        sys.executable,
+                        str(SCRIPTS / "plan_beta_coverage.py"),
+                        "--question",
+                        args.question,
+                        "--profile",
+                        args.mode,
+                        "--decomposition",
+                        str(
+                            args.output_root
+                            / f"{domain_run_id}-domain-planning/decomposition.json"
+                        ),
+                        "--hermes",
+                        str(args.hermes),
+                        "--output-root",
+                        str(args.output_root),
+                        "--public-query-ack",
+                    ],
+                    timeout=125,
+                )
+                if coverage_code == 2 and type(coverage_created.get("run_id")) is str:
+                    saved_id = coverage_created["run_id"]
+                    if re.fullmatch(
+                        r"BETA-COV-[0-9]{8}-[0-9]{6}-[A-F0-9]{8}", saved_id
+                    ):
+                        saved = args.output_root / f"{saved_id}-coverage-planning"
+                        if all(
+                            (saved / name).is_file()
+                            for name in (
+                                "failure.json",
+                                "model.raw.json",
+                                "model-usage.json",
+                                "model-trace.json",
+                            )
+                        ):
+                            recovered_code, recovered = _child(
+                                [
+                                    sys.executable,
+                                    str(SCRIPTS / "reconcile_beta_coverage.py"),
+                                    "--output",
+                                    str(saved),
+                                    "--question",
+                                    args.question,
+                                    "--profile",
+                                    args.mode,
+                                    "--decomposition",
+                                    str(
+                                        args.output_root
+                                        / f"{domain_run_id}-domain-planning/decomposition.json"
+                                    ),
+                                ],
+                                timeout=30,
+                            )
+                            if (
+                                recovered_code == 0
+                                and recovered.get("run_id") == saved_id
+                            ):
+                                coverage_code, coverage_created = 0, recovered
+                if coverage_code == 0 and type(coverage_created.get("run_id")) is str:
+                    coverage_run_id = coverage_created["run_id"]
+                    coverage_dir = (
+                        args.output_root / f"{coverage_run_id}-coverage-planning"
+                    )
+                    frame_value, _ = load_json(coverage_dir / "frame.json")
+                    if type(frame_value) is not dict or not verify_receipt_hash(
+                        frame_value
+                    ):
+                        raise ValueError("profile_coverage_frame_invalid")
+                    coverage_frame = frame_value
+                    coverage_run = _receipt(
+                        coverage_dir / "planning-run.json",
+                        "BetaCoveragePlanningRun",
+                        coverage_run_id,
+                    )
+                    coverage_progress = assess_beta_coverage(
+                        coverage_frame, [], budget_exhausted=False
+                    )
+                    write_exclusive_json(
+                        args.output_root
+                        / f"{coverage_run_id}-coverage-initial-progress.json",
+                        coverage_progress,
+                    )
+                    if preflight_cost_usd is not None:
+                        preflight_cost_usd = round(
+                            preflight_cost_usd
+                            + float(coverage_run["reported_model_cost_usd"]),
+                            8,
+                        )
+            except (SearchRunError, OSError, ValueError):
+                preflight_cost_usd = None
+        if args.domain_first and coverage_frame is not None:
+            try:
+                mapping_dir = args.output_root / f"{run_id}-coverage-map-plan"
+                frame_path = (
+                    args.output_root / f"{coverage_run_id}-coverage-planning/frame.json"
+                )
+                try:
+                    mapping_code, _ = _child(
+                        [
+                            sys.executable,
+                            str(SCRIPTS / "map_beta_coverage_plan.py"),
+                            "--frame",
+                            str(frame_path),
+                            "--plan",
+                            str(plan_dir / "plan.json"),
+                            "--hermes",
+                            str(args.hermes),
+                            "--output-root",
+                            str(args.output_root),
+                        ],
+                        timeout=75,
+                    )
+                except SearchRunError:
+                    mapping_code = 2
+                    if all(
+                        (mapping_dir / name).is_file()
+                        for name in (
+                            "failure.json",
+                            "model.raw.json",
+                            "model-usage.json",
+                            "model-trace.json",
+                        )
+                    ):
+                        mapping_code, _ = _child(
+                            [
+                                sys.executable,
+                                str(SCRIPTS / "reconcile_beta_coverage_mapping.py"),
+                                "--frame",
+                                str(frame_path),
+                                "--plan",
+                                str(plan_dir / "plan.json"),
+                                "--output",
+                                str(mapping_dir),
+                            ],
+                            timeout=30,
+                        )
+                if mapping_code == 0:
+                    coverage_mapping = _receipt(
+                        mapping_dir / "mapping.json",
+                        "BetaCoverageQueryAtomMapping",
+                        run_id,
+                    )
+                    mapping_run = _receipt(
+                        mapping_dir / "run.json",
+                        "BetaCoverageQueryMappingRun",
+                        run_id,
+                    )
+                    if (
+                        mapping_run.get("mapping_receipt_hash")
+                        != coverage_mapping["receipt_hash"]
+                    ):
+                        raise ValueError("profile_mapping_run_not_bound")
+                    if preflight_cost_usd is not None:
+                        preflight_cost_usd = round(
+                            preflight_cost_usd
+                            + float(mapping_run["reported_model_cost_usd"]),
+                            8,
+                        )
+            except (SearchRunError, OSError, ValueError):
+                preflight_cost_usd = None
         if args.mode == "academic":
             protocol_value, _ = load_json(plan_dir / "academic-protocol.json")
             if type(protocol_value) is not dict:
@@ -717,6 +1357,50 @@ def main(argv: list[str] | None = None) -> int:
             execution = _receipt(execution_file, "BetaAutomaticSourceExecution", run_id)
         if execution is not None and portfolio_file.is_file():
             portfolio = _receipt(portfolio_file, "BetaSourcePortfolio", run_id)
+        if (
+            args.domain_first
+            and coverage_frame is not None
+            and coverage_mapping is not None
+            and portfolio is not None
+        ):
+            try:
+                observed_code, _ = _child(
+                    [
+                        sys.executable,
+                        str(SCRIPTS / "observe_beta_plan_coverage.py"),
+                        "--frame",
+                        str(
+                            args.output_root
+                            / f"{coverage_run_id}-coverage-planning/frame.json"
+                        ),
+                        "--plan",
+                        str(plan_dir / "plan.json"),
+                        "--mapping",
+                        str(
+                            args.output_root
+                            / f"{run_id}-coverage-map-plan/mapping.json"
+                        ),
+                        "--portfolio",
+                        str(portfolio_file),
+                        "--output-root",
+                        str(args.output_root),
+                    ],
+                    timeout=30,
+                )
+                if observed_code == 0:
+                    observed_dir = args.output_root / f"{run_id}-coverage-observed"
+                    coverage_query_progress = _receipt(
+                        observed_dir / "progress.json",
+                        "BetaCoverageProgressAssessment",
+                        coverage_run_id,
+                    )
+                    coverage_query_observation = _receipt(
+                        observed_dir / "observation.json",
+                        "BetaCoverageMappedQueryObservation",
+                        run_id,
+                    )
+            except (SearchRunError, OSError, ValueError):
+                pass
         if (
             args.mode == "academic"
             and execution is not None
@@ -986,6 +1670,146 @@ def main(argv: list[str] | None = None) -> int:
                     )
             except SearchRunError:
                 pass
+        if (
+            args.domain_first
+            and adaptive_limit
+            and coverage_frame is not None
+            and decomposition is not None
+            and coverage_query_observation is not None
+        ):
+            unqueried = set(coverage_query_observation["unqueried_atom_ids"])
+            query_counts = (
+                {
+                    row["atom_id"]: row["query_count"]
+                    for row in coverage_query_progress["atoms"]
+                }
+                if coverage_query_progress is not None
+                else {}
+            )
+            ranked = sorted(
+                (
+                    atom
+                    for atom in coverage_frame["atoms"]
+                    if "web" in atom["required_families"]
+                ),
+                key=lambda atom: (
+                    atom["atom_id"] not in unqueried,
+                    query_counts.get(atom["atom_id"], 0),
+                    {"central": 0, "peripheral": 1, "marginal": 2}[atom["importance"]],
+                    {"negative": 0, "latent": 1, "positive": 2}[atom["space"]],
+                    atom["atom_id"],
+                ),
+            )
+            adaptive_observations: list[dict[str, Any]] = []
+            for batch_number, atom in enumerate(ranked[:adaptive_limit], 1):
+                adaptive_attempted = True
+                try:
+                    adaptive_command = [
+                        sys.executable,
+                        str(SCRIPTS / "advance_beta_coverage.py"),
+                        "--frame",
+                        str(
+                            args.output_root
+                            / f"{coverage_run_id}-coverage-planning/frame.json"
+                        ),
+                        "--decomposition",
+                        str(
+                            args.output_root
+                            / f"{domain_run_id}-domain-planning/decomposition.json"
+                        ),
+                        "--atom-id",
+                        atom["atom_id"],
+                        "--batch",
+                        str(batch_number),
+                        "--parent-run-id",
+                        run_id,
+                        "--hermes",
+                        str(args.hermes),
+                        "--output-root",
+                        str(args.output_root),
+                        "--public-query-ack",
+                    ]
+                    try:
+                        adaptive_code, _ = _child(
+                            adaptive_command,
+                            timeout=min(180, deadline - time.monotonic()),
+                        )
+                    except SearchRunError:
+                        saved = (
+                            args.output_root
+                            / f"{run_id}-C{batch_number:02d}-domain-web-plan"
+                        )
+                        if (
+                            not all(
+                                (saved / name).is_file()
+                                for name in (
+                                    "failure.json",
+                                    "model.raw.json",
+                                    "model-usage.json",
+                                    "model-trace.json",
+                                )
+                            )
+                            or (saved / "plan.json").exists()
+                        ):
+                            raise
+                        adaptive_code, _ = _child(
+                            [*adaptive_command, "--resume-saved"],
+                            timeout=min(180, deadline - time.monotonic()),
+                        )
+                    if adaptive_code != 0:
+                        break
+                    adaptive_id = f"{run_id}-C{batch_number:02d}"
+                    observed_dir = (
+                        args.output_root / f"{adaptive_id}-domain-web-observed"
+                    )
+                    batch_receipt = _receipt(
+                        observed_dir / "run.json",
+                        "BetaAdaptiveCoverageBatchRun",
+                        adaptive_id,
+                    )
+                    if (
+                        batch_receipt["atom_id"] != atom["atom_id"]
+                        or batch_receipt["frame_receipt_hash"]
+                        != coverage_frame["receipt_hash"]
+                    ):
+                        raise ValueError("adaptive_coverage_batch_not_bound")
+                    adaptive_observations_value, _ = load_json(
+                        observed_dir / "observations.json"
+                    )
+                    if type(adaptive_observations_value) is not list:
+                        raise ValueError("adaptive_coverage_observations_invalid")
+                    adaptive_observations = adaptive_observations_value
+                    source_cost = batch_receipt["reported_source_cost_usd"]
+                    model_cost = batch_receipt["reported_model_cost_usd"]
+                    if (
+                        type(source_cost) not in (int, float)
+                        or type(model_cost) not in (int, float)
+                        or source_cost < 0
+                        or model_cost < 0
+                    ):
+                        raise ValueError("adaptive_coverage_cost_unknown")
+                    adaptive_cost_usd = round(
+                        (adaptive_cost_usd or 0) + source_cost + model_cost, 8
+                    )
+                    adaptive_batches.append(batch_receipt)
+                except (SearchRunError, OSError, ValueError, KeyError, TypeError):
+                    adaptive_cost_usd = None
+                    break
+            if adaptive_batches:
+                initial_observations, _ = load_json(
+                    args.output_root / f"{run_id}-coverage-observed/observations.json"
+                )
+                if type(initial_observations) is not list:
+                    raise ValueError("coverage_initial_observations_invalid")
+                coverage_cumulative_progress = assess_beta_coverage(
+                    coverage_frame,
+                    [*initial_observations, *adaptive_observations],
+                    budget_exhausted=False,
+                )
+                write_exclusive_json(
+                    args.output_root / f"{run_id}-coverage-cumulative-progress.json",
+                    coverage_cumulative_progress,
+                )
         result, markdown = assemble_source_dossier(
             plan=plan,
             planning=planning,
@@ -1006,6 +1830,20 @@ def main(argv: list[str] | None = None) -> int:
             analysis_attempted=analysis_attempted,
             study_graph=study_graph,
             study_graph_attempted=study_graph_attempted,
+            domain_first_requested=args.domain_first,
+            decomposition=decomposition,
+            coverage_frame=coverage_frame,
+            coverage_progress=coverage_progress,
+            coverage_mapping=coverage_mapping,
+            coverage_query_progress=coverage_query_progress,
+            coverage_query_observation=coverage_query_observation,
+            coverage_cumulative_progress=coverage_cumulative_progress,
+            adaptive_batches=adaptive_batches if args.domain_first else None,
+            adaptive_attempted=adaptive_attempted,
+            adaptive_cost_usd=adaptive_cost_usd,
+            preflight_cost_usd=preflight_cost_usd,
+            domain_run_id=domain_run_id,
+            coverage_run_id=coverage_run_id,
         )
         write_exclusive_bytes(output / "result.md", markdown)
         write_exclusive_json(output / "outcome.json", result)

@@ -104,7 +104,8 @@ def reassemble_academic(root: Path, run_id: str) -> tuple[dict, bytes, str]:
     if (
         prior.get("mode") != "academic"
         or prior.get("plan_receipt_hash") != plan["receipt_hash"]
-        or prior.get("screening_receipt_hash") is not None
+        or prior.get("screening_receipt_hash") not in (None, screening["receipt_hash"])
+        or prior.get("analysis_receipt_hash") is not None
         or prior.get("workflow_execution_complete") is not False
         or prior.get("release_authorized") is not False
     ):

@@ -16,6 +16,9 @@ try:
 except ImportError:
     from file_io import load_json, read_private_bytes, write_exclusive_json
 
+from hermes_research_report.academic_datacite import (
+    MAX_RAW_BYTES as MAX_DATACITE_RAW_BYTES,
+)
 from hermes_research_report.beta_source_portfolio import (
     _expected_files,
     _file_rows,
@@ -37,10 +40,22 @@ def main(argv: list[str] | None = None) -> int:
             receipt, _ = load_json(path)
             if type(receipt) is not dict or path.name != "capture.json":
                 raise ValueError("acquisition_receipt_invalid")
-            rows = _file_rows(_expected_files(receipt), "receipt.expected_files")
+            rows = _file_rows(
+                _expected_files(receipt),
+                "receipt.expected_files",
+                maximum=MAX_DATACITE_RAW_BYTES
+                if receipt.get("contract") == "BetaDataCiteDatasetMetadataAcquisition"
+                else 250_000,
+            )
             actual = []
             for row in rows:
-                payload = read_private_bytes(path.parent / str(row["path"]))
+                payload = read_private_bytes(
+                    path.parent / str(row["path"]),
+                    maximum=MAX_DATACITE_RAW_BYTES
+                    if receipt.get("contract")
+                    == "BetaDataCiteDatasetMetadataAcquisition"
+                    else 250_000,
+                )
                 actual.append(
                     {
                         "path": row["path"],

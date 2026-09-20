@@ -15,10 +15,10 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "src"))
 
 try:
-    from .file_io import fsync_directory, write_exclusive_json
+    from .file_io import fsync_directory, load_json, write_exclusive_json
     from .model_call import ModelCallError, run_tool_free_model
 except ImportError:
-    from file_io import fsync_directory, write_exclusive_json
+    from file_io import fsync_directory, load_json, write_exclusive_json
     from model_call import ModelCallError, run_tool_free_model
 
 from hermes_research_report.beta_planner import (
@@ -39,6 +39,7 @@ def persist_planning_result(
     usage: dict[str, Any],
     trace: dict[str, Any],
     budget: dict[str, object],
+    decomposition_receipt_hash: str | None = None,
     reconciled: bool = False,
 ) -> dict[str, Any]:
     plan, protocol, proposal = parse_planning_proposal(
@@ -57,6 +58,7 @@ def persist_planning_result(
             "bootstrap_budget_hash": sha256_json(budget),
             "plan_receipt_hash": plan["receipt_hash"],
             "proposal_receipt_hash": proposal["receipt_hash"],
+            "decomposition_receipt_hash": decomposition_receipt_hash,
             "academic_protocol_receipt_hash": protocol["receipt_hash"]
             if protocol
             else None,
@@ -80,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--question", required=True)
     parser.add_argument("--hermes", type=Path, required=True)
+    parser.add_argument("--decomposition", type=Path)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--public-query-ack", action="store_true")
     args = parser.parse_args(argv)
@@ -90,9 +93,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     output: Path | None = None
+    run_id: str | None = None
     model_completed = False
     try:
-        prompt = build_planning_prompt(question=args.question, mode=args.mode)
+        decomposition = None
+        if args.decomposition is not None:
+            decomposition, _ = load_json(args.decomposition)
+        prompt = build_planning_prompt(
+            question=args.question, mode=args.mode, decomposition=decomposition
+        )
         if (
             not args.output_root.is_absolute()
             or args.output_root.is_symlink()
@@ -101,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("output_root_invalid")
         run_id = f"BETA-AUTO-{datetime.now(UTC):%Y%m%d-%H%M%S}-{secrets.token_hex(4).upper()}"
         output = args.output_root / f"{run_id}-planning"
+        assert output is not None
         budget: dict[str, object] = {
             "schema_version": 1,
             "run_id": run_id,
@@ -118,6 +128,11 @@ def main(argv: list[str] | None = None) -> int:
                 "question_sha256": hashlib.sha256(
                     args.question.strip().encode()
                 ).hexdigest(),
+                **(
+                    {"decomposition_receipt_hash": decomposition["receipt_hash"]}
+                    if type(decomposition) is dict
+                    else {}
+                ),
             },
         )
         model_completed = True
@@ -130,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
             usage=usage,
             trace=trace,
             budget=budget,
+            decomposition_receipt_hash=decomposition["receipt_hash"]
+            if type(decomposition) is dict
+            else None,
         )
         print(
             json.dumps(
@@ -170,7 +188,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             except (OSError, ValueError):
                 pass
-        print(json.dumps({"status": "error", "code": code}), file=sys.stderr)
+        print(
+            json.dumps({"status": "error", "code": code, "run_id": run_id}),
+            file=sys.stderr,
+        )
         return 2
 
 

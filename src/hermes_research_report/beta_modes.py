@@ -30,7 +30,7 @@ _SENSITIVE = re.compile(
 _MODES = {"search", "deep", "ultra", "academic"}
 _MIN_LEAVES = {"search": 1, "deep": 2, "ultra": 3, "academic": 2}
 _MIN_FAMILIES = {"search": 1, "deep": 2, "ultra": 3, "academic": 2}
-_PROFILED_FAMILIES = {"web", "scholarly_index", "preprint_archive"}
+_PROFILED_FAMILIES = {"web", "scholarly_index", "preprint_archive", "dataset"}
 _HARD_CAPS = {
     "search": (2, 3, 1, 120, 0.02),
     "deep": (8, 16, 4, 600, 0.20),

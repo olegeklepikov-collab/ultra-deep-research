@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "src"))
@@ -41,6 +42,7 @@ _FAMILY_SCRIPTS = {
     "web": ("acquire_beta_sources.py", "keenable"),
     "scholarly_index": ("acquire_openalex_metadata.py", "openalex"),
     "preprint_archive": ("acquire_arxiv_metadata.py", "arxiv"),
+    "dataset": ("acquire_datacite_metadata.py", "datacite"),
 }
 _CODE = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
 
@@ -233,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError("output_root_invalid")
         output = args.output_root / f"{plan['run_id']}-execution"
+        assert output is not None
         new_private_directory(output)
         write_exclusive_json(
             output / "attempt.json",
@@ -308,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
                 else "candidate_count"
                 if capture_contract
                 in {"BetaOpenAlexMetadataAcquisition", "BetaArxivMetadataAcquisition"}
+                or capture_contract == "BetaDataCiteDatasetMetadataAcquisition"
                 else None
             )
             slots = capture_value.get(slot_field) if slot_field else None
@@ -616,7 +620,9 @@ def main(argv: list[str] | None = None) -> int:
                             metadata_cost
                         ) not in (int, float):
                             raise ValueError("article_screen_cost_invalid")
-                        incremental_cost = screen_cost - metadata_cost
+                        incremental_cost = float(
+                            cast(int | float, screen_cost)
+                        ) - float(cast(int | float, metadata_cost))
                         if (
                             type(incremental_cost) not in (int, float)
                             or incremental_cost < 0
@@ -675,11 +681,15 @@ def main(argv: list[str] | None = None) -> int:
             and len(rows) == len(steps)
             and all(row["status"] == "captured" for row in rows)
         )
-        total_cost = (
-            round(portfolio["reported_provider_cost_usd"] + model_cost_used, 8)
-            if portfolio is not None
-            else None
-        )
+        if portfolio is not None:
+            provider_cost = portfolio.get("reported_provider_cost_usd")
+            if type(provider_cost) not in (int, float):
+                raise ValueError("portfolio_cost_invalid")
+            total_cost = round(
+                float(cast(int | float, provider_cost)) + model_cost_used, 8
+            )
+        else:
+            total_cost = None
         if (
             total_cost is not None
             and total_cost > plan["limits"]["max_estimated_cost_usd"]

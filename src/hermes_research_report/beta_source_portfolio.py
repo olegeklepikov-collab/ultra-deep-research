@@ -6,6 +6,7 @@ import math
 import re
 from typing import Any, cast
 
+from .academic_datacite import MAX_RAW_BYTES as MAX_DATACITE_RAW_BYTES
 from .beta_modes import verify_beta_mode_plan
 from .canonical import verify_receipt_hash, with_receipt_hash
 from .errors import fail, require_exact_keys, require_list, require_mapping
@@ -18,7 +19,11 @@ def _expected_files(receipt: dict[str, object]) -> list[dict[str, object]]:
     if contract == "BetaSourceAcquisition":
         rows = require_list(receipt.get("artifact_hashes"), "receipt.artifact_hashes")
         return [require_mapping(row, "receipt.artifact_hashes[]") for row in rows]
-    if contract in {"BetaOpenAlexMetadataAcquisition", "BetaArxivMetadataAcquisition"}:
+    if contract in {
+        "BetaOpenAlexMetadataAcquisition",
+        "BetaArxivMetadataAcquisition",
+        "BetaDataCiteDatasetMetadataAcquisition",
+    }:
         return [
             {
                 "path": receipt.get("response_file"),
@@ -29,7 +34,9 @@ def _expected_files(receipt: dict[str, object]) -> list[dict[str, object]]:
     fail("unknown_acquisition_contract", "receipt.contract", "Неизвестная квитанция.")
 
 
-def _file_rows(value: object, path: str) -> list[dict[str, object]]:
+def _file_rows(
+    value: object, path: str, *, maximum: int = 250_000
+) -> list[dict[str, object]]:
     rows = []
     for index, item in enumerate(require_list(value, path)):
         row = require_mapping(item, f"{path}[{index}]")
@@ -44,7 +51,7 @@ def _file_rows(value: object, path: str) -> list[dict[str, object]]:
             or type(digest) is not str
             or not _HASH.fullmatch(digest)
             or type(size) is not int
-            or not 0 <= size <= 250_000
+            or not 0 <= size <= maximum
         ):
             fail(
                 "artifact_row_invalid", f"{path}[{index}]", "Недопустимая запись файла."
@@ -91,9 +98,18 @@ def assess_beta_source_portfolio(request: object) -> dict[str, Any]:
                 f"{path}.receipt",
                 "Квитанция от другого плана.",
             )
-        expected_files = _file_rows(_expected_files(receipt), f"{path}.expected_files")
+        file_maximum = (
+            MAX_DATACITE_RAW_BYTES
+            if receipt.get("contract") == "BetaDataCiteDatasetMetadataAcquisition"
+            else 250_000
+        )
+        expected_files = _file_rows(
+            _expected_files(receipt), f"{path}.expected_files", maximum=file_maximum
+        )
         actual_files = _file_rows(
-            observation["artifact_readback"], f"{path}.artifact_readback"
+            observation["artifact_readback"],
+            f"{path}.artifact_readback",
+            maximum=file_maximum,
         )
         if expected_files != actual_files:
             fail(
@@ -130,14 +146,53 @@ def assess_beta_source_portfolio(request: object) -> dict[str, Any]:
                         "Веб-лист не совпадает с планом.",
                     )
                 positive = row.get("status") == "extracted_candidate"
+                attempts = row.get("candidate_attempts")
+                artifacts = receipt.get("artifact_hashes")
+                retained_hashes = (
+                    {
+                        artifact["path"].removesuffix(".txt"): artifact.get("sha256")
+                        for artifact in artifacts
+                        if type(artifact) is dict
+                        and type(artifact.get("path")) is str
+                        and artifact["path"].endswith(".txt")
+                    }
+                    if type(artifacts) is list
+                    else {}
+                )
+                screened_count = (
+                    sum(
+                        type(attempt) is dict
+                        and attempt.get("status") == "screened_out"
+                        and type(attempt.get("source_id")) is str
+                        and attempt.get("content_sha256")
+                        == retained_hashes.get(attempt["source_id"])
+                        for attempt in attempts
+                    )
+                    if type(attempts) is list
+                    else 0
+                )
+                failed_extract_count = (
+                    sum(
+                        type(attempt) is dict and attempt.get("status") == "failed"
+                        for attempt in attempts
+                    )
+                    if type(attempts) is list
+                    else 0
+                )
                 observed[leaf_id] = {
                     "leaf_id": leaf_id,
                     "provider": "keenable_configured",
                     "source_family": "web",
                     "status": "candidate" if positive else "failed",
                     "reason": row.get("reason"),
-                    "read_scope": "extracted_text_only" if positive else "none",
+                    "read_scope": "extracted_text_only"
+                    if positive
+                    else "extracted_text_screened_unverified"
+                    if screened_count
+                    else "none",
                     "candidate_count": 1 if positive else 0,
+                    "retained_screened_text_count": screened_count,
+                    "failed_extract_attempt_count": failed_extract_count,
                     "route_configuration_verified": receipt.get(
                         "route_configuration_verified"
                     )
@@ -248,6 +303,60 @@ def assess_beta_source_portfolio(request: object) -> dict[str, Any]:
                 "primary_origin_independence_verified": False,
                 "receipt_hash": receipt["receipt_hash"],
             }
+        elif contract == "BetaDataCiteDatasetMetadataAcquisition":
+            leaf_id = receipt.get("leaf_id")
+            if (
+                type(leaf_id) is not str
+                or leaf_id not in planned
+                or planned[leaf_id]["source_family"] != "dataset"
+                or receipt.get("source_family") != "dataset"
+                or receipt.get("provider") != "datacite"
+                or leaf_id in observed
+                or receipt.get("dataset_content_read") is not False
+                or receipt.get("dataset_schema_verified") is not False
+            ):
+                fail(
+                    "dataset_leaf_binding_invalid",
+                    f"{path}.receipt",
+                    "Запись DataCite не совпадает с планом либо преувеличивает чтение данных.",
+                )
+            positive = (
+                receipt.get("status") == "partial_candidate"
+                and receipt.get("provider_identity_verified") is True
+            )
+            reported_cost = receipt.get("reported_cost_usd")
+            if type(reported_cost) not in (int, float):
+                fail(
+                    "provider_cost_invalid",
+                    f"{path}.receipt",
+                    "Недопустимая стоимость.",
+                )
+            cost_number = float(cast(int | float, reported_cost))
+            if cost_number < 0:
+                fail(
+                    "provider_cost_invalid",
+                    f"{path}.receipt",
+                    "Недопустимая стоимость.",
+                )
+            cost_total += cost_number
+            observed[leaf_id] = {
+                "leaf_id": leaf_id,
+                "provider": "datacite",
+                "source_family": "dataset",
+                "status": "candidate" if positive else "failed",
+                "reason": receipt.get("reason"),
+                "read_scope": "dataset_doi_metadata_only" if positive else "none",
+                "candidate_count": receipt.get("candidate_count") if positive else 0,
+                "dataset_content_read": False,
+                "dataset_schema_verified": False,
+                "route_configuration_verified": receipt.get(
+                    "provider_identity_verified"
+                )
+                is True,
+                "provider_reply_attested": positive,
+                "primary_origin_independence_verified": False,
+                "receipt_hash": receipt["receipt_hash"],
+            }
     ordered = [
         observed[leaf["leaf_id"]]
         for leaf in plan["leaves"]
@@ -273,6 +382,9 @@ def assess_beta_source_portfolio(request: object) -> dict[str, Any]:
             "candidate_leaf_ids": covered,
             "missing_or_failed_leaf_ids": missing,
             "leaves": ordered,
+            "retained_screened_text_count": sum(
+                row.get("retained_screened_text_count", 0) for row in ordered
+            ),
             "reported_provider_cost_usd": cost_total,
             "independent_primary_source_count": 0,
             "source_family_diversity_as_evidence_verified": False,

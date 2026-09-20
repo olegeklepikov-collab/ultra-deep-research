@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     from .file_io import (
@@ -28,7 +28,10 @@ except ImportError:
         write_exclusive_json,
     )
 
-from hermes_research_report.beta_model import validate_tool_free_observation
+from hermes_research_report.beta_model import (
+    MAX_TOTAL_TOKENS,
+    validate_tool_free_observation,
+)
 from hermes_research_report.beta_modes import verify_beta_mode_plan
 from hermes_research_report.canonical import sha256_json
 from hermes_research_report.errors import ContractError
@@ -36,6 +39,8 @@ from hermes_research_report.errors import ContractError
 PROVIDER = "openrouter"
 MODEL = "openai/gpt-5.4-nano"
 MAX_WALL_SECONDS = 120
+MAX_MODEL_RESPONSE_BYTES = 1_048_576
+MAX_MODEL_TRACE_BYTES = 4_000_000
 _SESSION_ID = re.compile(r"^[0-9]{8}_[0-9]{6}_[0-9a-f]+$")
 _RESERVED = {
     "schema_version",
@@ -73,6 +78,14 @@ def _code(error: BaseException) -> str:
     return "model_input_or_storage_failed"
 
 
+def _response_bytes(stdout: str) -> tuple[str, bytes]:
+    raw = stdout.strip()
+    payload = (raw + "\n").encode("utf-8")
+    if not raw or len(payload) > MAX_MODEL_RESPONSE_BYTES:
+        raise ValueError("model_response_invalid")
+    return raw, payload
+
+
 def run_tool_free_model(
     *,
     prompt: str,
@@ -95,6 +108,9 @@ def run_tool_free_model(
         binding = {"plan_receipt_hash": verified["receipt_hash"]}
     else:
         budget = bootstrap_budget
+        budget_cost = (
+            budget.get("max_estimated_cost_usd") if type(budget) is dict else None
+        )
         if (
             type(budget) is not dict
             or set(budget)
@@ -109,15 +125,15 @@ def run_tool_free_model(
             or type(budget["run_id"]) is not str
             or not re.fullmatch(r"^[A-Z][A-Z0-9-]{2,63}$", budget["run_id"])
             or type(budget["wall_seconds"]) is not int
-            or not 1 <= budget["wall_seconds"] <= 60
-            or type(budget["max_estimated_cost_usd"]) not in (int, float)
-            or not 0 < budget["max_estimated_cost_usd"] <= 0.01
+            or not 1 <= budget["wall_seconds"] <= MAX_WALL_SECONDS
+            or type(budget_cost) not in (int, float)
+            or not 0 < cast(float, budget_cost) <= 0.01
             or type(budget["model_calls"]) is not int
             or budget["model_calls"] != 1
         ):
             raise ModelCallError("planning_budget_invalid")
         run_id = budget["run_id"]
-        limit = float(budget["max_estimated_cost_usd"])
+        limit = float(cast(float, budget_cost))
         wall_seconds = budget["wall_seconds"]
         model_calls = 1
         binding = {"bootstrap_budget_hash": sha256_json(budget)}
@@ -128,21 +144,13 @@ def run_tool_free_model(
         or not os.access(hermes, os.X_OK)
     ):
         raise ModelCallError("hermes_executable_invalid")
-    token_limit = (
-        30_000
-        if verified is not None
-        and verified["mode"] == "academic"
-        and attempt_binding.get("source_scope") == "parsed_pdf_text_layout_unverified"
-        and type(attempt_binding.get("fulltext_receipt_hash")) is str
-        else 10_000
-    )
+    token_limit = MAX_TOTAL_TOKENS
     home = Path(os.environ.get("HERMES_HOME", ""))
     if not home.is_absolute() or not home.is_dir() or home.is_symlink():
         raise ModelCallError("hermes_home_invalid")
     try:
-        from hermes_cli.config import load_config
-
-        if load_config().get("fallback_model"):
+        config_module = importlib.import_module("hermes_cli.config")
+        if config_module.load_config().get("fallback_model"):
             raise ValueError("model_fallback_route_not_bounded")
         model_tools = importlib.import_module("model_tools")
         if model_tools.get_tool_definitions(
@@ -206,10 +214,8 @@ def run_tool_free_model(
         session_id = usage.get("session_id")
         if type(session_id) is not str or not _SESSION_ID.fullmatch(session_id):
             raise ValueError("model_session_id_invalid")
-        raw = completed.stdout.strip()
-        if not raw or len(raw) > 5000:
-            raise ValueError("model_response_invalid")
-        write_exclusive_bytes(output / "model.raw.json", (raw + "\n").encode())
+        raw, payload = _response_bytes(completed.stdout)
+        write_exclusive_bytes(output / "model.raw.json", payload)
         exported = subprocess.run(
             [
                 str(hermes),
@@ -229,7 +235,10 @@ def run_tool_free_model(
             timeout=30,
             env={**os.environ, "HERMES_HOME": str(home)},
         )
-        if exported.returncode != 0 or len(exported.stdout) > 250_000:
+        if (
+            exported.returncode != 0
+            or len(exported.stdout.encode()) > MAX_MODEL_TRACE_BYTES
+        ):
             raise ValueError("model_trace_unavailable")
         trace = json.loads(exported.stdout)
         if type(trace) is not dict:

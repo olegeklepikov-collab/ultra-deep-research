@@ -8,6 +8,7 @@ import json
 import stat
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "src"))
@@ -23,6 +24,7 @@ except ImportError:
 
 from hermes_research_report.beta_model import validate_tool_free_observation
 from hermes_research_report.beta_modes import validate_public_question
+from hermes_research_report.beta_planner import build_planning_prompt
 from hermes_research_report.canonical import sha256_json, with_receipt_hash
 from hermes_research_report.errors import ContractError
 
@@ -34,9 +36,13 @@ def main(argv: list[str] | None = None) -> int:
         "--mode", choices=("search", "deep", "ultra", "academic"), required=True
     )
     parser.add_argument("--question", required=True)
+    parser.add_argument("--decomposition", type=Path)
     args = parser.parse_args(argv)
     try:
         question = validate_public_question(args.question)
+        decomposition = None
+        if args.decomposition is not None:
+            decomposition, _ = load_json(args.decomposition)
         output = args.output
         if (
             not output.is_absolute()
@@ -55,10 +61,8 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError("planning_saved_record_invalid")
         attempt, failure, usage, trace = (
-            attempt_value,
-            failure_value,
-            usage_value,
-            trace_value,
+            cast(dict[str, Any], value)
+            for value in (attempt_value, failure_value, usage_value, trace_value)
         )
         run_id = attempt.get("run_id")
         if type(run_id) is not str or output.name != f"{run_id}-planning":
@@ -74,6 +78,12 @@ def main(argv: list[str] | None = None) -> int:
             attempt.get("mode") != args.mode
             or attempt.get("question_sha256")
             != hashlib.sha256(question.encode()).hexdigest()
+            or attempt.get("decomposition_receipt_hash")
+            != (
+                decomposition.get("receipt_hash")
+                if type(decomposition) is dict
+                else None
+            )
             or attempt.get("bootstrap_budget_hash") != sha256_json(budget)
             or attempt.get("provider") != PROVIDER
             or attempt.get("model") != MODEL
@@ -90,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError("planning_reconciliation_not_allowed")
         raw = (
-            read_private_bytes(output / "model.raw.json", maximum=6000)
+            read_private_bytes(output / "model.raw.json", maximum=1_048_576)
             .decode("utf-8")
             .rstrip("\n")
         )
@@ -113,7 +123,16 @@ def main(argv: list[str] | None = None) -> int:
             or type(assistant_content) is not str
             or hashlib.sha256(user_content.encode()).hexdigest()
             != attempt.get("prompt_sha256")
-            or not user_content.endswith(f"РЕЖИМ: {args.mode}\nВОПРОС: {question}")
+            or (
+                user_content
+                != build_planning_prompt(
+                    question=question, mode=args.mode, decomposition=decomposition
+                )
+                if decomposition is not None
+                else not user_content.endswith(
+                    f"РЕЖИМ: {args.mode}\nВОПРОС: {question}"
+                )
+            )
             or assistant_content.strip() != raw
         ):
             raise ValueError("planning_trace_prompt_invalid")
@@ -133,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
             usage=usage,
             trace=trace,
             budget=budget,
+            decomposition_receipt_hash=decomposition["receipt_hash"]
+            if type(decomposition) is dict
+            else None,
             reconciled=True,
         )
         receipt = with_receipt_hash(
