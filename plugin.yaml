@@ -1,8 +1,10 @@
 name: ultra-deep-research
-version: 0.33.0a1
+version: 0.41.0a1
 description: "Ultra Deep Research — нативные исследовательские контракты для нового Hermes; без наследования действующего инстанса."
 kind: standalone
 entry_point: plugin.py
+pip_dependencies:
+  - pdfplumber==0.11.9
 requires_env: []
 provides_tools:
   - research_compare_periods
@@ -10,6 +12,7 @@ provides_tools:
   - research_contract_create
   - research_contract_propose_revision
   - research_budget_assess
+  - research_beta_mode_plan_build
   - research_plan_build
   - research_route_assess
   - research_search_ledger_assess
@@ -121,7 +124,6 @@ provides_tools:
   - research_utility_assess
   - research_greenfield_assess
   - research_greenfield_accept
-  - research_secret_import_assess
   - research_foundation_assess
   - research_state_reconcile
   - research_artifact_assess

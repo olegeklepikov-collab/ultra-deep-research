@@ -12,7 +12,7 @@ from typing import Any
 from .canonical import sha256_json
 
 CATALOG_VERSION = "2026-09-14"
-ADAPTER_VERSION = "0.33.0a1"
+ADAPTER_VERSION = "0.41.0a1"
 
 
 def _operation(

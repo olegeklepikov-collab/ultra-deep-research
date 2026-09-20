@@ -145,7 +145,6 @@ from .search_workflow import (
     compile_query_ast,
     record_search_environment,
 )
-from .secret_import import assess_secret_import
 from .source_families import assess_search_coverage, audit_source_pool
 from .sources import select_source, verify_fragment
 from .state import reconcile_state
@@ -221,7 +220,6 @@ __all__ = [
     "assess_search_ledger",
     "assess_search_stop",
     "assess_search_strategy",
-    "assess_secret_import",
     "assess_source_influence",
     "assess_synthesis",
     "assess_udr_plan",
@@ -278,4 +276,4 @@ __all__ = [
     "verify_document_graph",
     "verify_fragment",
 ]
-__version__ = "0.33.0a1"
+__version__ = "0.41.0a1"

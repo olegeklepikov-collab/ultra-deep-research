@@ -43,6 +43,10 @@ try:
         assess_narrative_diff,
         assess_source_influence,
     )
+    from .src.hermes_research_report.beta_modes import (
+        BETA_MODE_PLAN_BUILD_SCHEMA,
+        build_beta_mode_plan,
+    )
     from .src.hermes_research_report.briefing import (
         BRIEF_BUILD_SCHEMA,
         CONTEXT_PACKAGE_BUILD_SCHEMA,
@@ -309,10 +313,6 @@ try:
         compile_query_ast,
         record_search_environment,
     )
-    from .src.hermes_research_report.secret_import import (
-        SECRET_IMPORT_ASSESS_SCHEMA,
-        assess_secret_import,
-    )
     from .src.hermes_research_report.source_families import (
         SEARCH_COVERAGE_ASSESS_SCHEMA,
         SOURCE_POOL_AUDIT_SCHEMA,
@@ -369,6 +369,10 @@ except ImportError:  # Installed wheel/module execution.
         assess_attribution,
         assess_narrative_diff,
         assess_source_influence,
+    )
+    from hermes_research_report.beta_modes import (
+        BETA_MODE_PLAN_BUILD_SCHEMA,
+        build_beta_mode_plan,
     )
     from hermes_research_report.briefing import (
         BRIEF_BUILD_SCHEMA,
@@ -633,10 +637,6 @@ except ImportError:  # Installed wheel/module execution.
         compile_query_ast,
         record_search_environment,
     )
-    from hermes_research_report.secret_import import (
-        SECRET_IMPORT_ASSESS_SCHEMA,
-        assess_secret_import,
-    )
     from hermes_research_report.source_families import (
         SEARCH_COVERAGE_ASSESS_SCHEMA,
         SOURCE_POOL_AUDIT_SCHEMA,
@@ -731,6 +731,10 @@ def handle_contract_revision(args: object, **_kwargs: object) -> str:
 
 def handle_budget_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_budget, args)
+
+
+def handle_beta_mode_plan_build(args: object, **_kwargs: object) -> str:
+    return _handle(build_beta_mode_plan, args)
 
 
 def handle_plan_build(args: object, **_kwargs: object) -> str:
@@ -1173,10 +1177,6 @@ def handle_greenfield_accept(args: object, **_kwargs: object) -> str:
     return _handle(accept_greenfield, args)
 
 
-def handle_secret_import_assess(args: object, **_kwargs: object) -> str:
-    return _handle(assess_secret_import, args)
-
-
 def handle_foundation_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_foundation, args)
 
@@ -1243,6 +1243,13 @@ def register(ctx: Any) -> None:
         toolset="research",
         schema=BUDGET_ASSESS_SCHEMA,
         handler=handle_budget_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_beta_mode_plan_build",
+        toolset="research",
+        schema=BETA_MODE_PLAN_BUILD_SCHEMA,
+        handler=handle_beta_mode_plan_build,
         check_fn=lambda: True,
     )
     ctx.register_tool(
@@ -2020,13 +2027,6 @@ def register(ctx: Any) -> None:
         toolset="research",
         schema=GREENFIELD_ACCEPT_SCHEMA,
         handler=handle_greenfield_accept,
-        check_fn=lambda: True,
-    )
-    ctx.register_tool(
-        name="research_secret_import_assess",
-        toolset="research",
-        schema=SECRET_IMPORT_ASSESS_SCHEMA,
-        handler=handle_secret_import_assess,
         check_fn=lambda: True,
     )
     ctx.register_tool(
