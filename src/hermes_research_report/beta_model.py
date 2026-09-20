@@ -235,7 +235,7 @@ def validate_tool_free_observation(
         if (
             type(max_estimated_cost_usd) not in (int, float)
             or not math.isfinite(max_estimated_cost_usd)
-            or not 0 < max_estimated_cost_usd <= 0.01
+            or not 0 < max_estimated_cost_usd <= 0.02
         ):
             fail(
                 "model_budget_or_route_invalid",

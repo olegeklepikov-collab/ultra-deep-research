@@ -66,13 +66,27 @@ def main(argv: list[str] | None = None) -> int:
         usage = cast(dict[str, Any], usage)
         trace = cast(dict[str, Any], trace)
         run_id = attempt.get("run_id")
-        budget: dict[str, object] = {
-            "schema_version": 1,
-            "run_id": run_id,
-            "wall_seconds": 60,
-            "max_estimated_cost_usd": 0.01,
-            "model_calls": 1,
-        }
+        budget_cost = attempt.get("max_estimated_cost_usd")
+        if type(budget_cost) not in (int, float) or budget_cost not in (0.01, 0.02):
+            raise ValueError("coverage_saved_budget_invalid")
+        candidates: list[dict[str, object]] = [
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "wall_seconds": seconds,
+                "max_estimated_cost_usd": budget_cost,
+                "model_calls": 1,
+            }
+            for seconds in (60, 180)
+        ]
+        matched_budgets = [
+            candidate
+            for candidate in candidates
+            if sha256_json(candidate) == attempt.get("bootstrap_budget_hash")
+        ]
+        if len(matched_budgets) != 1:
+            raise ValueError("coverage_saved_budget_invalid")
+        budget = matched_budgets[0]
         prompt = build_coverage_prompt(
             question=question, profile=args.profile, decomposition=decomposition
         )
@@ -110,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError("coverage_saved_attempt_not_bound")
         validate_tool_free_observation(
-            max_estimated_cost_usd=0.01,
+            max_estimated_cost_usd=float(budget_cost),
             usage=usage,
             trace=trace,
             provider=PROVIDER,

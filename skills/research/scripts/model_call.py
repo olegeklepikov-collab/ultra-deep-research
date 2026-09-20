@@ -38,7 +38,7 @@ from hermes_research_report.errors import ContractError
 
 PROVIDER = "openrouter"
 MODEL = "openai/gpt-5.4-nano"
-MAX_WALL_SECONDS = 120
+MAX_WALL_SECONDS = 240
 MAX_MODEL_RESPONSE_BYTES = 1_048_576
 MAX_MODEL_TRACE_BYTES = 4_000_000
 _SESSION_ID = re.compile(r"^[0-9]{8}_[0-9]{6}_[0-9a-f]+$")
@@ -127,7 +127,7 @@ def run_tool_free_model(
             or type(budget["wall_seconds"]) is not int
             or not 1 <= budget["wall_seconds"] <= MAX_WALL_SECONDS
             or type(budget_cost) not in (int, float)
-            or not 0 < cast(float, budget_cost) <= 0.01
+            or not 0 < cast(float, budget_cost) <= 0.02
             or type(budget["model_calls"]) is not int
             or budget["model_calls"] != 1
         ):

@@ -272,6 +272,9 @@ def parse_coverage_proposal(
             "expert": "web",
             "conceptual": "web",
             "case": "web",
+            "web_primary": "web",
+            "direct_observation": "web",
+            "scholarly": "scholarly_index",
         }
         allowed_families = {
             "web",
@@ -298,6 +301,7 @@ def parse_coverage_proposal(
                     "model_families": list(raw_families),
                     "discovery_families": families,
                     "web_discovery_confers_no_practice_or_expert_authority": True,
+                    "alias_discovery_confers_no_evidence_authority": True,
                 }
             )
         minimum = item.get("required_independent_origins")

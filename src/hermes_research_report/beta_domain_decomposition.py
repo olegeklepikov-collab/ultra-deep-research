@@ -136,6 +136,16 @@ def parse_domain_decomposition(
         value = json.loads(raw, object_pairs_hook=unique_pairs)
     except json.JSONDecodeError:
         raise ValueError("domain_decomposition_json_invalid") from None
+    nested_scope_recovered_from_question = False
+    if (
+        type(value) is dict
+        and set(value) == {"scope"}
+        and type(value["scope"]) is dict
+        and set(value["scope"])
+        == {"domains", "aspects", "constructs", "exclusions", "unresolved_terms"}
+    ):
+        value = {"scope": question, **value["scope"]}
+        nested_scope_recovered_from_question = True
     if type(value) is not dict or set(value) != {
         "scope",
         "domains",
@@ -402,6 +412,7 @@ def parse_domain_decomposition(
             ),
             "constructs": constructs,
             "normalized_construct_kinds": normalized_construct_kinds,
+            "nested_scope_recovered_from_public_question": nested_scope_recovered_from_question,
             "compound_unit_candidate_indices": compound_unit_candidates,
             "compound_unit_semantics_verified": False,
             "unresolved_model_construct_indices": unresolved_model_construct_indices,

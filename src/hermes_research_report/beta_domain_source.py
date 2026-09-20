@@ -49,9 +49,19 @@ def _atom_context(
     facet = atom["facet_id"]
     name = frame["facet_labels"][facet]
     aspects = [row for row in decomposition["aspects"] if row["name"] == name]
-    if len(aspects) != 1:
+    if len(aspects) > 1:
         raise ValueError("domain_source_aspect_unmapped")
-    aspect = aspects[0]
+    mapped = len(aspects) == 1
+    aspect = (
+        aspects[0]
+        if mapped
+        else {
+            "question_type": "unclassified_coverage_gap",
+            "evidence_bases": [],
+            "construct_refs": [],
+            "academic_role_effective": "not_applicable",
+        }
+    )
     constructs = [
         {
             key: row[key]
@@ -80,6 +90,7 @@ def _atom_context(
         "facet_definition": frame["facet_definitions"][facet],
         "aspect_question_type": aspect["question_type"],
         "aspect_evidence_bases": aspect["evidence_bases"],
+        "initial_aspect_mapping": "exact" if mapped else "coverage_gap_unmapped",
         "constructs": constructs,
         "reviewer_flags": reviewer_flags,
     }
@@ -209,6 +220,7 @@ def parse_domain_web_query(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     frame, decomposition, review = _bound(frame, decomposition, review)
     build_domain_web_prompt(frame, decomposition, review, atom_id=atom_id)
+    context, _ = _atom_context(frame, decomposition, review, atom_id=atom_id)
     if (
         type(batch_number) is not int
         or not 1 <= batch_number <= 99
@@ -309,6 +321,7 @@ def parse_domain_web_query(
             "atom_id": atom_id,
             "frame_receipt_hash": frame["receipt_hash"],
             "decomposition_receipt_hash": decomposition["receipt_hash"],
+            "initial_aspect_mapping": context["initial_aspect_mapping"],
             "review_receipt_hash": review["receipt_hash"] if review else None,
             "atom_question_sha256": hashlib.sha256(
                 atom["question"].encode()

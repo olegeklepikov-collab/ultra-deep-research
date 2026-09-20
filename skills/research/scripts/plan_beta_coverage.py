@@ -113,8 +113,8 @@ def main(argv: list[str] | None = None) -> int:
         budget: dict[str, object] = {
             "schema_version": 1,
             "run_id": run_id,
-            "wall_seconds": 60,
-            "max_estimated_cost_usd": 0.01,
+            "wall_seconds": 180,
+            "max_estimated_cost_usd": 0.02,
             "model_calls": 1,
         }
         raw, usage, trace = run_tool_free_model(

@@ -1175,7 +1175,7 @@ def main(argv: list[str] | None = None) -> int:
                         str(args.output_root),
                         "--public-query-ack",
                     ],
-                    timeout=125,
+                    timeout=230,
                 )
                 if coverage_code == 2 and type(coverage_created.get("run_id")) is str:
                     saved_id = coverage_created["run_id"]
