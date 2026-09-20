@@ -138,7 +138,8 @@ def validate_semantic_verification(
         or type(rationale) is not str
         or not 5 <= len(rationale) <= 2000
         or type(evidence_quote) is not str
-        or any(ord(char) < 32 for char in rationale + evidence_quote)
+        or any(ord(char) < 32 for char in rationale)
+        or any(ord(char) < 32 and char not in "\n\t" for char in evidence_quote)
         or (verdict != "supported" and evidence_quote != "")
     ):
         fail(

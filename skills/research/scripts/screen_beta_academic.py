@@ -26,6 +26,7 @@ from hermes_research_report.canonical import verify_receipt_hash, with_receipt_h
 from hermes_research_report.errors import ContractError
 
 _CODE = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
+_TARGET_ARXIV = re.compile(r"\barxiv:(\d{4}\.\d{4,5}v\d+)\b", re.IGNORECASE)
 
 
 def _bound_receipt(
@@ -213,6 +214,19 @@ def validate_screening_response(
         or prior + incremental > plan["limits"]["max_estimated_cost_usd"]
     ):
         raise ValueError("academic_screen_cost_invalid")
+    target_match = _TARGET_ARXIV.search(plan["question"])
+    target_url = (
+        f"https://arxiv.org/abs/{target_match.group(1)}" if target_match else None
+    )
+    effective_decisions = [dict(row) for row in decisions]
+    target_overrides = 0
+    for row in effective_decisions:
+        if row["record_id"] == target_url and row["verdict"] != "include_candidate":
+            row["verdict"] = "include_candidate"
+            row["reason"] = (
+                "Вопрос прямо называет этот препринт; необходим разбор его полного текста."
+            )
+            target_overrides += 1
     return with_receipt_hash(
         {
             "schema_version": 1,
@@ -235,13 +249,19 @@ def validate_screening_response(
                 }
                 for row in records
             ],
-            "decisions": decisions,
+            "decisions": effective_decisions,
+            "model_decisions": decisions,
+            "direct_target_override_count": target_overrides,
             "identified_record_count": len(records),
             "include_candidate_count": sum(
-                row["verdict"] == "include_candidate" for row in decisions
+                row["verdict"] == "include_candidate" for row in effective_decisions
             ),
-            "exclude_count": sum(row["verdict"] == "exclude" for row in decisions),
-            "uncertain_count": sum(row["verdict"] == "uncertain" for row in decisions),
+            "exclude_count": sum(
+                row["verdict"] == "exclude" for row in effective_decisions
+            ),
+            "uncertain_count": sum(
+                row["verdict"] == "uncertain" for row in effective_decisions
+            ),
             "full_text_screened_count": 0,
             "included_study_count": 0,
             "reported_incremental_cost_usd": incremental,
