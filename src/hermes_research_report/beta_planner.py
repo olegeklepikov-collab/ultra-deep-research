@@ -159,21 +159,23 @@ def parse_planning_proposal(
     normalized_rival_assumptions: list[dict[str, Any]] = []
     normalized_rival_pair_objects: list[int] = []
     normalized_rival_statement_objects: list[int] = []
+    normalized_rival_text_keys: list[dict[str, Any]] = []
     untrusted_rival_extra_fields: list[dict[str, Any]] = []
     for index, raw_rival in enumerate(raw_rivals):
         if type(raw_rival) is dict:
             wrapped = require_mapping(raw_rival, f"proposal.rival_hypotheses[{index}]")
-            if "hypothesis" not in wrapped and "statement" not in wrapped:
+            text_keys = [
+                key
+                for key in ("hypothesis", "statement", "claim", "text")
+                if key in wrapped
+            ]
+            if not text_keys:
                 fail(
                     "rival_shape_invalid",
                     f"proposal.rival_hypotheses[{index}]",
                     "Нет основной гипотезы.",
                 )
-            if (
-                "hypothesis" in wrapped
-                and "statement" in wrapped
-                and wrapped["hypothesis"] != wrapped["statement"]
-            ):
+            if any(wrapped[key] != wrapped[text_keys[0]] for key in text_keys[1:]):
                 fail(
                     "rival_shape_invalid",
                     f"proposal.rival_hypotheses[{index}]",
@@ -217,6 +219,8 @@ def parse_planning_proposal(
                     "key_assumptions",
                     "rival_hypothesis",
                     "statement",
+                    "claim",
+                    "text",
                 }
             }
             if extra:
@@ -229,7 +233,12 @@ def parse_planning_proposal(
                 )
             if "statement" in wrapped:
                 normalized_rival_statement_objects.append(index)
-            raw_rival = wrapped.get("hypothesis", wrapped.get("statement"))
+            selected_key = text_keys[0]
+            if selected_key != "hypothesis":
+                normalized_rival_text_keys.append(
+                    {"input_index": index, "model_key": selected_key}
+                )
+            raw_rival = wrapped[selected_key]
             normalized_rival_objects += 1
             rivals.append(
                 require_string(
@@ -481,6 +490,7 @@ def parse_planning_proposal(
             "dropped_short_acronyms": dropped_short_acronyms,
             "normalized_rival_objects": normalized_rival_objects,
             "normalized_rival_statement_objects": normalized_rival_statement_objects,
+            "normalized_rival_text_keys": normalized_rival_text_keys,
             "normalized_rival_assumptions": normalized_rival_assumptions,
             "normalized_rival_pair_objects": normalized_rival_pair_objects,
             "untrusted_rival_extra_fields": untrusted_rival_extra_fields,
