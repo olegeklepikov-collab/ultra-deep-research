@@ -133,33 +133,69 @@ def validate_challenge_response(
         seen.add(index)
         if verdict == "unclear":
             if source_ref is not None or quote:
-                raise ValueError("ultra_challenge_unclear_citation_invalid")
-            normalized_judgments.append({**normalized, "quote_origin": None})
-        elif (
-            type(source_ref) is not str
-            or source_ref not in sources
-            or not 5 <= len(quote.split()) <= 20
-        ):
-            raise ValueError("ultra_challenge_quote_not_exact")
+                normalized_judgments.append(
+                    {
+                        **normalized,
+                        "source_ref": None,
+                        "quote": "",
+                        "quote_origin": None,
+                        "model_source_ref": source_ref,
+                        "model_quote_sha256": hashlib.sha256(
+                            quote.encode()
+                        ).hexdigest(),
+                        "downgrade_reason": "unclear_with_citation",
+                    }
+                )
+            else:
+                normalized_judgments.append({**normalized, "quote_origin": None})
         else:
-            aligned = (
-                (quote, sources[source_ref].find(quote))
-                if quote in sources[source_ref]
-                else _align_quote_to_source(quote, sources[source_ref])
+            downgrade_reason = (
+                "unknown_source_ref"
+                if type(source_ref) is not str or source_ref not in sources
+                else "quote_length_out_of_range"
+                if not 5 <= len(quote.split()) <= 20
+                else None
             )
-            if aligned is None:
-                raise ValueError("ultra_challenge_quote_not_exact")
-            exact_quote, _offset = aligned
-            normalized_judgments.append(
-                {
-                    **normalized,
-                    "quote": exact_quote,
-                    "quote_origin": "model_exact"
-                    if exact_quote == quote
-                    else "source_word_alignment_v1",
-                    "model_quote_sha256": hashlib.sha256(quote.encode()).hexdigest(),
-                }
-            )
+            aligned = None
+            if downgrade_reason is None:
+                aligned = (
+                    (quote, sources[source_ref].find(quote))
+                    if quote in sources[source_ref]
+                    else _align_quote_to_source(quote, sources[source_ref])
+                )
+                if aligned is None:
+                    downgrade_reason = "quote_not_exact"
+            if downgrade_reason is not None:
+                normalized_judgments.append(
+                    {
+                        **normalized,
+                        "verdict": "unclear",
+                        "source_ref": None,
+                        "quote": "",
+                        "quote_origin": None,
+                        "model_verdict": verdict,
+                        "model_source_ref": source_ref,
+                        "model_quote_sha256": hashlib.sha256(
+                            quote.encode()
+                        ).hexdigest(),
+                        "downgrade_reason": downgrade_reason,
+                    }
+                )
+            else:
+                assert aligned is not None
+                exact_quote, _offset = aligned
+                normalized_judgments.append(
+                    {
+                        **normalized,
+                        "quote": exact_quote,
+                        "quote_origin": "model_exact"
+                        if exact_quote == quote
+                        else "source_word_alignment_v1",
+                        "model_quote_sha256": hashlib.sha256(
+                            quote.encode()
+                        ).hexdigest(),
+                    }
+                )
     if seen != set(range(len(rivals))):
         raise ValueError("ultra_challenge_incomplete")
     if (
@@ -198,12 +234,17 @@ def validate_challenge_response(
             "judgments": normalized_judgments,
             "rival_count": len(rivals),
             "provisional_supported_count": sum(
-                row["verdict"] == "supported" for row in judgments
+                row["verdict"] == "supported" for row in normalized_judgments
             ),
             "provisional_contradicted_count": sum(
-                row["verdict"] == "contradicted" for row in judgments
+                row["verdict"] == "contradicted" for row in normalized_judgments
             ),
-            "unclear_count": sum(row["verdict"] == "unclear" for row in judgments),
+            "unclear_count": sum(
+                row["verdict"] == "unclear" for row in normalized_judgments
+            ),
+            "downgraded_quote_count": sum(
+                "downgrade_reason" in row for row in normalized_judgments
+            ),
             "independent_primary_work_count_verified": 0,
             "accepted_claim_count": 0,
             "reported_incremental_cost_usd": incremental,
@@ -282,7 +323,11 @@ def main(argv: list[str] | None = None) -> int:
                 or attempt.get("provider") != PROVIDER
                 or attempt.get("model") != MODEL
                 or attempt.get("retry_allowed") is not False
-                or failure.get("reason_code") != "ultra_challenge_judgment_invalid"
+                or failure.get("reason_code")
+                not in {
+                    "ultra_challenge_judgment_invalid",
+                    "ultra_challenge_quote_not_exact",
+                }
                 or failure.get("reconciliation_required") is not True
                 or failure.get("retry_allowed") is not False
             ):
@@ -328,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "reconciled_without_new_model_call": True,
                     "additional_model_calls": 0,
-                    "prior_failure_reason": "ultra_challenge_judgment_invalid",
+                    "prior_failure_reason": failure["reason_code"],
                 }
             )
             result = with_receipt_hash(body)
