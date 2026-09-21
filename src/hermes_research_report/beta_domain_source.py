@@ -249,6 +249,9 @@ def parse_domain_web_query(
     if type(proposed) is not dict or set(proposed) != {"query", "concept_groups"}:
         raise ValueError("domain_source_shape_invalid")
     model_group_goals = []
+    untrusted_group_fields: list[dict[str, Any]] = []
+    group_key_aliases: list[dict[str, Any]] = []
+    group_object_count = 0
     raw_groups = proposed["concept_groups"]
     if type(raw_groups) is not list or not raw_groups:
         raise ValueError("domain_source_groups_invalid")
@@ -256,21 +259,43 @@ def parse_domain_web_query(
     for index, group in enumerate(raw_groups):
         if type(group) is list:
             groups.append(group)
-        elif (
-            type(group) is dict
-            and set(group) == {"concepts", "goal"}
-            and type(group["concepts"]) is list
-            and type(group["goal"]) is str
-            and 5 <= len(group["goal"].strip()) <= 500
-        ):
-            groups.append(group["concepts"])
-            model_group_goals.append(
-                {
-                    "group_index": index,
-                    "model_goal": group["goal"].strip(),
-                    "semantic_goal_verified": False,
-                }
-            )
+        elif type(group) is dict:
+            list_fields = [
+                (key, value) for key, value in group.items() if type(value) is list
+            ]
+            if len(list_fields) != 1:
+                raise ValueError("domain_source_groups_invalid")
+            group_key, terms = list_fields[0]
+            groups.append(terms)
+            group_object_count += 1
+            if group_key != "concepts":
+                group_key_aliases.append({"group_index": index, "model_key": group_key})
+            if "goal" in group:
+                if (
+                    type(group["goal"]) is not str
+                    or not 5 <= len(group["goal"].strip()) <= 500
+                ):
+                    raise ValueError("domain_source_groups_invalid")
+                model_group_goals.append(
+                    {
+                        "group_index": index,
+                        "model_goal": group["goal"].strip(),
+                        "semantic_goal_verified": False,
+                    }
+                )
+            extra = {
+                key: value
+                for key, value in group.items()
+                if key not in {group_key, "goal"}
+            }
+            if extra:
+                untrusted_group_fields.append(
+                    {
+                        "group_index": index,
+                        "fields": extra,
+                        "treated_as_evidence": False,
+                    }
+                )
         else:
             raise ValueError("domain_source_groups_invalid")
     atom = next(row for row in frame["atoms"] if row["atom_id"] == atom_id)
@@ -332,7 +357,9 @@ def parse_domain_web_query(
             "query_domain_anchor_added": anchor_added,
             "effective_query": effective_query,
             "model_concept_group_goals": model_group_goals,
-            "normalized_concept_group_object_count": len(model_group_goals),
+            "normalized_concept_group_object_count": group_object_count,
+            "normalized_concept_group_keys": group_key_aliases,
+            "untrusted_concept_group_fields": untrusted_group_fields,
             "subplan_receipt_hash": plan["receipt_hash"],
             "executed_family": "web",
             "unattempted_required_families": sorted(
