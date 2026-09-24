@@ -39,6 +39,7 @@ except ImportError:
 from hermes_research_report.beta_modes import verify_beta_mode_plan
 from hermes_research_report.canonical import verify_receipt_hash, with_receipt_hash
 from hermes_research_report.errors import ContractError
+from hermes_research_report.runtime_snapshot import runtime_guarded
 
 MAX_PDF_BYTES = 50_000_000
 _CODE = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
@@ -164,6 +165,7 @@ def _parse_pdf(path: Path, payload: bytes) -> tuple[str, int]:
     return text, int(pages_match.group(1))
 
 
+@runtime_guarded
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)
@@ -329,4 +331,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from process_limits import guarded_main
+
+    raise SystemExit(guarded_main(main))

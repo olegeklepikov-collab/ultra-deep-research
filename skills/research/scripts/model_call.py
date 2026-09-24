@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib
 import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,41 +18,53 @@ try:
         fsync_directory,
         load_json,
         new_private_directory,
+        read_private_bytes,
         write_exclusive_bytes,
         write_exclusive_json,
     )
+    from .loaded_runtime import RUNTIME_FAILURE_CODES
 except ImportError:
     from file_io import (
         fsync_directory,
         load_json,
         new_private_directory,
+        read_private_bytes,
         write_exclusive_bytes,
         write_exclusive_json,
     )
+    from loaded_runtime import RUNTIME_FAILURE_CODES
 
 from hermes_research_report.beta_model import (
     MAX_TOTAL_TOKENS,
     validate_tool_free_observation,
 )
 from hermes_research_report.beta_modes import verify_beta_mode_plan
-from hermes_research_report.canonical import sha256_json
+from hermes_research_report.canonical import sha256_json, verify_receipt_hash, with_receipt_hash
 from hermes_research_report.errors import ContractError
+from hermes_research_report.runtime_snapshot import verify_runtime
 
-PROVIDER = "openrouter"
-MODEL = "openai/gpt-5.4-nano"
+_DEFAULT_PROVIDER = "openrouter"
+_DEFAULT_MODEL = "openai/gpt-5.4-nano"
+_ROUTES = {
+    (_DEFAULT_PROVIDER, _DEFAULT_MODEL): "none",
+    ("openai-codex", "gpt-5.6-sol"): "low",
+}
 MAX_WALL_SECONDS = 240
 MAX_MODEL_RESPONSE_BYTES = 1_048_576
 MAX_MODEL_TRACE_BYTES = 4_000_000
 _SESSION_ID = re.compile(r"^[0-9]{8}_[0-9]{6}_[0-9a-f]+$")
 _RESERVED = {
+    "runtime_snapshot_hash",
     "schema_version",
     "status",
     "run_id",
     "plan_receipt_hash",
     "bootstrap_budget_hash",
     "prompt_sha256",
+    "image_sha256",
     "provider",
     "model",
+    "reasoning",
     "max_total_tokens",
     "max_estimated_cost_usd",
     "model_calls_limit",
@@ -62,6 +76,76 @@ class ModelCallError(ValueError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def configured_model_route(config: object) -> tuple[str, str, str]:
+    """Use only an explicit, bounded Hermes model pair or the historic default."""
+    if type(config) is not dict:
+        raise ValueError("model_route_invalid")
+    model_config = config.get("model")
+    if model_config in (None, ""):
+        return _DEFAULT_PROVIDER, _DEFAULT_MODEL, _ROUTES[(_DEFAULT_PROVIDER, _DEFAULT_MODEL)]
+    if type(model_config) is not dict:
+        raise ValueError("model_route_invalid")
+    provider = model_config.get("provider")
+    model = model_config.get("default")
+    if provider in (None, "") and model in (None, ""):
+        return _DEFAULT_PROVIDER, _DEFAULT_MODEL, _ROUTES[(_DEFAULT_PROVIDER, _DEFAULT_MODEL)]
+    if type(provider) is not str or type(model) is not str:
+        raise ValueError("model_route_invalid")
+    route = (provider, model)
+    if route not in _ROUTES:
+        raise ValueError("model_route_not_allowed")
+    return provider, model, _ROUTES[route]
+
+
+def _startup_model_route() -> tuple[str, str, str]:
+    """Freeze the bounded route once for existing module-level consumers."""
+    if not os.environ.get("HERMES_HOME"):
+        return configured_model_route({})
+    try:
+        config_module = importlib.import_module("hermes_cli.config")
+        return configured_model_route(config_module.load_config())
+    except (ImportError, ValueError, OSError):
+        # The call preflight will report the precise failure before any model request.
+        return configured_model_route({})
+
+
+PROVIDER, MODEL, REASONING = _startup_model_route()
+
+
+def cost_accounting(usage: dict[str, Any], provider: str) -> dict[str, Any]:
+    """Preserve subscription inclusion without treating zero as a cash price."""
+    status, source = usage.get("cost_status"), usage.get("cost_source")
+    estimate = usage.get("estimated_cost_usd")
+    included = (
+        provider == "openai-codex"
+        and status == "included"
+        and source == "none"
+        and type(estimate) in (int, float)
+        and estimate == 0
+    )
+    scope = (
+        "subscription_included_not_cash_price"
+        if included
+        else "provider_estimate"
+        if provider == _DEFAULT_PROVIDER
+        else "unverified"
+    )
+    return with_receipt_hash(
+        {
+            "contract": "BetaModelCostAccounting",
+            "provider": provider,
+            "model": usage.get("model"),
+            "session_id": usage.get("session_id"),
+            "estimated_cost_usd": estimate,
+            "cost_status": status,
+            "cost_source": source,
+            "accounting_scope": scope,
+            "numeric_budget_guard_retained": True,
+            "cash_price_or_net_value_verified": False,
+        }
+    )
 
 
 def _code(error: BaseException) -> str:
@@ -86,6 +170,70 @@ def _response_bytes(stdout: str) -> tuple[str, bytes]:
     return raw, payload
 
 
+def prompt_binding_matches(
+    content, prompt: str, image_sha256: str | None = None
+) -> bool:
+    if image_sha256 is None:
+        return content == prompt
+    if type(content) is not list or len(content) != 2:
+        return False
+    texts = [
+        p.get("text") for p in content if type(p) is dict and p.get("type") == "text"
+    ]
+    images = []
+    for part in content:
+        if type(part) is dict and part.get("type") == "image_url":
+            if (
+                type(part.get("image_url")) is not dict
+                or type(part["image_url"].get("url")) is not str
+            ):
+                return False
+            images.append(part["image_url"]["url"])
+    if (
+        texts != [prompt]
+        or len(images) != 1
+        or not images[0].startswith("data:image/png;base64,")
+    ):
+        return False
+    try:
+        return (
+            hashlib.sha256(
+                base64.b64decode(images[0].split(",", 1)[1], validate=True)
+            ).hexdigest()
+            == image_sha256
+        )
+    except ValueError:
+        return False
+
+
+def vision_binding_matches(
+    output: Path, trace: dict, prompt: str, image_sha: str, raw: str,
+    provider: str = PROVIDER, model: str = MODEL,
+) -> bool:
+    content = trace["messages"][0].get("content")
+    if prompt_binding_matches(content, prompt, image_sha):
+        return True
+    try:
+        sent, _ = load_json(output / "vision-input.json")
+        observed, _ = load_json(output / "vision-observation.json")
+        return (
+            content in (prompt, prompt + "\n[screenshot]")
+            and verify_receipt_hash(sent)
+            and verify_receipt_hash(observed)
+            and sent.get("image_sha256") == image_sha
+            and sent.get("prompt_sha256") == hashlib.sha256(prompt.encode()).hexdigest()
+            and sent.get("content_types") == ["text", "image_url"]
+            and sent.get("provider") == provider
+            and sent.get("model") == model
+            and observed.get("input_receipt_hash") == sent["receipt_hash"]
+            and observed.get("session_id") == trace.get("session_id", trace.get("id"))
+            and observed.get("response_sha256")
+            == hashlib.sha256(raw.encode()).hexdigest()
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def run_tool_free_model(
     *,
     prompt: str,
@@ -94,7 +242,13 @@ def run_tool_free_model(
     attempt_binding: dict[str, object],
     plan: object | None = None,
     bootstrap_budget: dict[str, object] | None = None,
+    preserve_completed_cost_overrun: bool = False,
+    image_path: Path | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    if type(preserve_completed_cost_overrun) is not bool or (
+        preserve_completed_cost_overrun and bootstrap_budget is None
+    ):
+        raise ModelCallError("model_attempt_binding_invalid")
     if (plan is None) == (bootstrap_budget is None) or set(attempt_binding) & _RESERVED:
         raise ModelCallError("model_attempt_binding_invalid")
     verified = verify_beta_mode_plan(plan) if plan is not None else None
@@ -144,14 +298,24 @@ def run_tool_free_model(
         or not os.access(hermes, os.X_OK)
     ):
         raise ModelCallError("hermes_executable_invalid")
+    if (
+        hermes.name != "hermes"
+        or hermes.parent.resolve() != Path(sys.executable).parent.resolve()
+    ):
+        raise ModelCallError("hermes_python_entrypoint_required")
     token_limit = MAX_TOTAL_TOKENS
+    runtime_hash = verify_runtime()
     home = Path(os.environ.get("HERMES_HOME", ""))
     if not home.is_absolute() or not home.is_dir() or home.is_symlink():
         raise ModelCallError("hermes_home_invalid")
     try:
         config_module = importlib.import_module("hermes_cli.config")
-        if config_module.load_config().get("fallback_model"):
+        configured = config_module.load_config()
+        if configured.get("fallback_model") or configured.get("fallback_providers"):
             raise ValueError("model_fallback_route_not_bounded")
+        provider, model, reasoning = configured_model_route(configured)
+        if (provider, model, reasoning) != (PROVIDER, MODEL, REASONING):
+            raise ValueError("model_route_changed_since_import")
         model_tools = importlib.import_module("model_tools")
         if model_tools.get_tool_definitions(
             enabled_toolsets=["context_engine"], quiet_mode=True
@@ -163,39 +327,76 @@ def run_tool_free_model(
     try:
         new_private_directory(output)
         created = True
+        image_sha = None
+        if image_path is not None:
+            image_bytes = read_private_bytes(image_path, maximum=8_000_000)
+            if not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("vision_png_required")
+            image_sha = hashlib.sha256(image_bytes).hexdigest()
         attempt = {
             "schema_version": 1,
             "status": "started_unknown_until_reconciled",
             "run_id": run_id,
             **binding,
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            "provider": PROVIDER,
-            "model": MODEL,
+            "provider": provider,
+            "model": model,
+            "reasoning": reasoning,
             "max_total_tokens": token_limit,
             "max_estimated_cost_usd": limit,
             "model_calls_limit": model_calls,
             "retry_allowed": False,
+            "runtime_snapshot_hash": runtime_hash,
             **attempt_binding,
+            **({"image_sha256": image_sha} if image_sha else {}),
         }
         write_exclusive_json(output / "attempt.json", attempt)
         usage_file = output / "model-usage.json"
+        command = [
+            str(hermes),
+            "-z",
+            prompt,
+            "--provider",
+            provider,
+            "-m",
+            model,
+            "--reasoning",
+            reasoning,
+            "-t",
+            "context_engine",
+            "--safe-mode",
+            "--usage-file",
+            str(usage_file),
+        ]
+        if image_path is not None:
+            request_file = output / "vision-request.json"
+            write_exclusive_json(
+                request_file,
+                {
+                    "prompt": prompt,
+                    "image": str(image_path),
+                    "provider": provider,
+                    "model": model,
+                    "reasoning": reasoning,
+                    "usage_file": str(usage_file),
+                },
+            )
+            command = [
+                sys.executable,
+                str(Path(__file__).with_name("vision_model_worker.py")),
+                str(request_file),
+            ]
+        else:
+            command = [
+                sys.executable,
+                str(Path(__file__).with_name("runtime_model_worker.py")),
+                str(output),
+                *command,
+            ]
+        if verify_runtime() != runtime_hash:
+            raise ValueError("runtime_configuration_changed")
         completed = subprocess.run(
-            [
-                str(hermes),
-                "-z",
-                prompt,
-                "--provider",
-                PROVIDER,
-                "-m",
-                MODEL,
-                "--reasoning",
-                "none",
-                "-t",
-                "context_engine",
-                "--safe-mode",
-                "--usage-file",
-                str(usage_file),
-            ],
+            command,
             cwd=home,
             capture_output=True,
             text=True,
@@ -206,6 +407,15 @@ def run_tool_free_model(
         if usage_file.is_file():
             usage_file.chmod(0o600)
         if completed.returncode != 0 or not usage_file.is_file():
+            runtime_failure = output / "effective-runtime-failure.json"
+            if runtime_failure.is_file():
+                failure, _ = load_json(runtime_failure)
+                if (
+                    type(failure) is dict
+                    and verify_receipt_hash(failure)
+                    and failure.get("reason_code") in RUNTIME_FAILURE_CODES
+                ):
+                    raise ValueError(failure["reason_code"])
             raise ValueError("model_call_failed_reconcile_first")
         usage_value, _ = load_json(usage_file)
         if type(usage_value) is not dict:
@@ -216,6 +426,24 @@ def run_tool_free_model(
             raise ValueError("model_session_id_invalid")
         raw, payload = _response_bytes(completed.stdout)
         write_exclusive_bytes(output / "model.raw.json", payload)
+        try:
+            effective, _ = load_json(output / "effective-runtime.json")
+            entry, _ = load_json(output / "effective-model-entry.json")
+        except (OSError, ValueError):
+            raise ValueError("model_effective_runtime_unbound") from None
+        if not (
+            type(effective) is dict
+            and type(entry) is dict
+            and verify_receipt_hash(effective)
+            and verify_receipt_hash(entry)
+            and effective.get("contract") == "LoadedHermesRuntimeSnapshot"
+            and entry.get("contract") == "LoadedHermesModelEntry"
+            and effective.get("initial_runtime_hash") == runtime_hash
+            and entry.get("initial_runtime_hash") == runtime_hash
+            and entry.get("runtime_receipt_hash") == effective.get("receipt_hash")
+            and entry.get("loaded_config_hash") == effective.get("loaded_config_hash")
+        ):
+            raise ValueError("model_effective_runtime_unbound")
         exported = subprocess.run(
             [
                 str(hermes),
@@ -244,15 +472,36 @@ def run_tool_free_model(
         if type(trace) is not dict:
             raise ValueError("model_trace_invalid")
         write_exclusive_json(output / "model-trace.json", trace)
+        if image_sha and not vision_binding_matches(
+            output, trace, prompt, image_sha, raw, provider, model
+        ):
+            raise ValueError("vision_trace_image_not_bound")
         validate_tool_free_observation(
             plan=verified,
             max_estimated_cost_usd=limit if verified is None else None,
             usage=usage,
             trace=trace,
-            provider=PROVIDER,
-            model=MODEL,
+            provider=provider,
+            model=model,
             max_total_tokens=token_limit,
+            preserve_completed_cost_overrun=preserve_completed_cost_overrun,
         )
+        accounting = cost_accounting(usage, provider)
+        write_exclusive_json(output / "cost-accounting.json", accounting)
+        if accounting["accounting_scope"] == "unverified":
+            raise ValueError("model_cost_status_unverified")
+        if preserve_completed_cost_overrun:
+            write_exclusive_json(
+                output / "budget-observation.json",
+                {
+                    "run_id": run_id,
+                    "declared_cost_limit_usd": limit,
+                    "observed_cost_usd": usage["estimated_cost_usd"],
+                    "cost_limit_exceeded": usage["estimated_cost_usd"] > limit,
+                    "completed_response_preserved": True,
+                    "additional_calls_authorized": False,
+                },
+            )
         fsync_directory(output)
         return raw, usage, trace
     except (

@@ -36,10 +36,12 @@ from hermes_research_report.academic_publisher_raw import MAX_HTML_BYTES
 from hermes_research_report.beta_modes import verify_beta_mode_plan
 from hermes_research_report.canonical import verify_receipt_hash, with_receipt_hash
 from hermes_research_report.errors import ContractError
+from hermes_research_report.runtime_snapshot import runtime_guarded, verify_runtime
 
 SCRIPTS = Path(__file__).resolve().parent
 _FAMILY_SCRIPTS = {
     "web": ("acquire_beta_sources.py", "keenable"),
+    "official": ("acquire_beta_sources.py", "official"),
     "scholarly_index": ("acquire_openalex_metadata.py", "openalex"),
     "preprint_archive": ("acquire_arxiv_metadata.py", "arxiv"),
     "dataset": ("acquire_datacite_metadata.py", "datacite"),
@@ -200,12 +202,20 @@ def _publisher_readback(path: Path, plan: dict, metadata: dict, article: dict) -
     return receipt
 
 
+def _guarded_child(*args, **kwargs):
+    verify_runtime()
+    kwargs.setdefault("check", False)
+    return subprocess.run(*args, **kwargs)  # noqa: PLW1510 — explicit default above; callers retain overrides.
+
+
+@runtime_guarded
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--hermes", type=Path)
     parser.add_argument("--public-query-ack", action="store_true")
+    parser.add_argument("--read-all-candidates", action="store_true")
     args = parser.parse_args(argv)
     if not args.public_query_ack:
         print(
@@ -276,8 +286,12 @@ def main(argv: list[str] | None = None) -> int:
             ]
             if leaf_id is not None:
                 command.extend(("--leaf-id", leaf_id))
+            if script == "acquire_beta_sources.py" and (
+                args.read_all_candidates or plan["mode"] == "ultra"
+            ):
+                command.extend(("--max-candidates-per-leaf", "3"))
             try:
-                child = subprocess.run(
+                child = _guarded_child(
                     command,
                     capture_output=True,
                     text=True,
@@ -374,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
                         "--public-query-ack",
                     ]
                     try:
-                        article_child = subprocess.run(
+                        article_child = _guarded_child(
                             article_command,
                             capture_output=True,
                             text=True,
@@ -471,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
                                 str(publisher_dir),
                             ]
                             try:
-                                publisher_child = subprocess.run(
+                                publisher_child = _guarded_child(
                                     publisher_command,
                                     capture_output=True,
                                     text=True,
@@ -571,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
                             str(screen_dir),
                         ]
                         try:
-                            screen_child = subprocess.run(
+                            screen_child = _guarded_child(
                                 screen_command,
                                 capture_output=True,
                                 text=True,
@@ -660,7 +674,7 @@ def main(argv: list[str] | None = None) -> int:
             ]
             for capture in captures:
                 command.extend(("--acquisition", str(capture)))
-            child = subprocess.run(
+            child = _guarded_child(
                 command, capture_output=True, text=True, check=False, timeout=30
             )
             if child.returncode != 0:

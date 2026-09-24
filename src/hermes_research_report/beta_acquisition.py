@@ -141,9 +141,15 @@ def acquire_beta_sources(
     extract: Callable[[list[str]], str],
     selected_leaf_id: str | None = None,
     route_proof: dict[str, object] | None = None,
+    max_candidates_per_leaf: int = 1,
     observed_at: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, bytes]]:
-    """Use at most one non-duplicate source per leaf and retain raw host responses."""
+    """Retain bounded candidates; the first eligible source remains the leaf summary."""
+    if (
+        type(max_candidates_per_leaf) is not int
+        or not 1 <= max_candidates_per_leaf <= 3
+    ):
+        raise AcquisitionError("candidate_read_limit_invalid")
     verified = verify_beta_mode_plan(plan)
     pinned_route = route_proof == {
         "search_backend": "keenable",
@@ -157,7 +163,7 @@ def acquire_beta_sources(
     leaves = verified["leaves"]
     if selected_leaf_id is not None:
         leaves = [leaf for leaf in leaves if leaf["leaf_id"] == selected_leaf_id]
-        if len(leaves) != 1 or leaves[0]["source_family"] != "web":
+        if len(leaves) != 1 or leaves[0]["source_family"] not in {"web", "official"}:
             raise AcquisitionError("web_leaf_not_routed")
     now = observed_at or datetime.now(UTC)
     if now.tzinfo is None:
@@ -327,7 +333,33 @@ def acquire_beta_sources(
                 attempt["status"] = "extracted_candidate"
                 row["status"] = "extracted_candidate"
                 row["reason"] = "exact_host_response_retained"
-                break
+                if (
+                    sum(
+                        item.get("status") == "extracted_candidate" for item in attempts
+                    )
+                    >= max_candidates_per_leaf
+                ):
+                    break
+            eligible = [
+                item for item in attempts if item.get("status") == "extracted_candidate"
+            ]
+            if eligible:
+                selected = eligible[0]
+                filename = f"{selected['source_id']}.txt"
+                row.update(
+                    status="extracted_candidate",
+                    reason="exact_host_response_retained",
+                    source_id=selected["source_id"],
+                    title=selected["title"],
+                    url=selected["url"],
+                    content_file=filename,
+                    content_sha256=selected["content_sha256"],
+                    content_bytes=len(files[filename]),
+                    extract_response_sha256=selected["extract_response_sha256"],
+                    retained_candidate_count=len(eligible),
+                    concept_groups_matched=True,
+                )
+                row.pop("missing_concept_group_indexes", None)
         except AcquisitionError as error:
             row["reason"] = error.code
     successful = sum(row["status"] == "extracted_candidate" for row in rows)

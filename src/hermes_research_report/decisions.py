@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from datetime import datetime
 from typing import Any
 
 from .canonical import with_receipt_hash
@@ -348,7 +349,7 @@ def assess_decision_envelope(request: object) -> dict[str, Any]:
         key: require_string(challenge[key], f"request.challenge.{key}")
         for key in ("type", "discriminator", "outcome", "safe_wording")
     }
-    weakened = before == "supported" and after in {
+    weakened = after in {
         "contested",
         "weakened",
         "unresolved",
@@ -400,7 +401,11 @@ def assess_decision_envelope(request: object) -> dict[str, Any]:
         issues.append("segment_prediction_not_individual_authority")
     if applies and any(value != "pass" for value in gate_values.values()):
         issues.append("human_impact_gate_incomplete")
-    safe_strength = "limited_test" if weakened else strength
+    safe_strength = (
+        "limited_test"
+        if weakened and strength in {"reversible_action", "irreversible_action"}
+        else strength
+    )
     payload = {
         "schema_version": 1,
         "contract": "DecisionEnvelopeReceipt",
@@ -426,7 +431,7 @@ def assess_decision_envelope(request: object) -> dict[str, Any]:
         "triggers": triggers,
         "challenge": challenge_record,
         "human_impact_gates": gate_values,
-        "automatic_action_allowed": not issues and not automatic,
+        "automatic_action_allowed": False,
         "external_action_performed": False,
         "persistence_applied": False,
         "issues": sorted(issues),
@@ -507,6 +512,17 @@ def assess_incident(request: object) -> dict[str, Any]:
     data = _schema(request, set(INCIDENT_ASSESS_SCHEMA["required"]))
     incident_ref = require_string(data["incident_ref"], "request.incident_ref")
     as_of = require_string(data["as_of"], "request.as_of")
+    try:
+        cutoff = datetime.fromisoformat(as_of)
+        if cutoff.tzinfo is None:
+            raise ValueError()
+    except ValueError:
+        fail(
+            "invalid_incident_cutoff",
+            "request.as_of",
+            "Требуется время с часовым поясом.",
+        )
+    snapshot_issues = []
     source_ranks: list[dict[str, Any]] = []
     for index, raw in enumerate(require_list(data["sources"], "request.sources")):
         path = f"request.sources[{index}]"
@@ -539,6 +555,21 @@ def assess_incident(request: object) -> dict[str, Any]:
                 ),
             }
         )
+    for row in claims:
+        try:
+            observed = datetime.fromisoformat(row["observed_at"])
+            if observed.tzinfo is None:
+                raise ValueError()
+        except ValueError:
+            fail(
+                "invalid_incident_observation",
+                "request.claims",
+                "Требуется время наблюдения с часовым поясом.",
+            )
+        if observed > cutoff:
+            snapshot_issues.append("incident_observation_after_cutoff")
+        if not row["preliminary"]:
+            snapshot_issues.append("incident_claim_not_preliminary")
     alternatives: list[dict[str, Any]] = []
     for index, raw in enumerate(
         require_list(data["alternatives"], "request.alternatives")
@@ -573,7 +604,9 @@ def assess_incident(request: object) -> dict[str, Any]:
     post_review = require_string(
         data["post_incident_review_ref"], "request.post_incident_review_ref"
     )
-    issues = ["high_risk_action_not_authorized"] if high_risk and not authorized else []
+    issues = snapshot_issues + (
+        ["high_risk_action_not_authorized"] if high_risk and not authorized else []
+    )
     payload = {
         "schema_version": 1,
         "contract": "IncidentDecisionEnvelopeReceipt",

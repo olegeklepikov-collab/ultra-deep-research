@@ -367,7 +367,7 @@ def assess_role_independence(request: object) -> dict[str, Any]:
     data = _schema(request, set(ROLE_INDEPENDENCE_ASSESS_SCHEMA["required"]))
     roles = []
     refs: set[str] = set()
-    signatures: dict[tuple[str, str, str, str], list[str]] = {}
+    signatures: dict[tuple[str, str, str], list[str]] = {}
     for index, raw in enumerate(require_list(data["roles"], "request.roles")):
         path = f"request.roles[{index}]"
         row = require_mapping(raw, path)
@@ -385,7 +385,6 @@ def assess_role_independence(request: object) -> dict[str, Any]:
             fail("duplicate_role", f"{path}.role_ref", "Повтор роли.")
         refs.add(record["role_ref"])
         signature = (
-            record["model_family"],
             record["corpus_ref"],
             record["method_ref"],
             record["context_hash"],
@@ -402,6 +401,11 @@ def assess_role_independence(request: object) -> dict[str, Any]:
         "roles": roles,
         "correlated_role_groups": correlated,
         "independent_judgement_count": len(signatures),
+        "process_signature_count": len(signatures),
+        "material_signature_count": len({r["corpus_ref"] for r in roles}),
+        "model_family_count": len({r["model_family"] for r in roles}),
+        "primary_evidence_independence_verified": False,
+        "assessment_basis": "declared_process_and_material_signatures",
         "different_names_count_as_independence": False,
         "persistence_applied": False,
     }

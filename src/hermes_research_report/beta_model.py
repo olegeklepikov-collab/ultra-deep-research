@@ -222,7 +222,10 @@ def validate_tool_free_observation(
     provider: str,
     model: str,
     max_total_tokens: int = MAX_TOTAL_TOKENS,
+    preserve_completed_cost_overrun: bool = False,
 ) -> tuple[int, float, str]:
+    if type(preserve_completed_cost_overrun) is not bool:
+        fail("model_budget_or_route_invalid", "budget", "Недопустимый режим бюджета.")
     if (plan is None) == (max_estimated_cost_usd is None):
         fail(
             "model_budget_or_route_invalid",
@@ -267,7 +270,8 @@ def validate_tool_free_observation(
         or not 0 < max_total_tokens <= MAX_TOTAL_TOKENS
         or not 0 < tokens <= max_total_tokens
         or not math.isfinite(cost_number)
-        or not 0 <= cost_number <= cost_limit
+        or cost_number < 0
+        or (cost_number > cost_limit and not preserve_completed_cost_overrun)
         or type(session_id) is not str
         or not _SESSION_ID.fullmatch(session_id)
     ):

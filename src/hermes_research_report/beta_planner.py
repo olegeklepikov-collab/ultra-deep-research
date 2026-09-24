@@ -11,6 +11,7 @@ from typing import Any
 from .beta_modes import (
     ARXIV_VERSIONED_ID,
     build_beta_mode_plan,
+    question_scoped_short_identifier,
     validate_public_protocol_rule,
     validate_public_question,
 )
@@ -29,7 +30,7 @@ _LIMITS = {
     "ultra": (16, 32, 8, 1200, 0.50),
     "academic": (12, 40, 64, 3600, 0.30),
 }
-_FAMILIES = ("web", "scholarly_index", "preprint_archive", "dataset")
+_FAMILIES = ("web", "official", "scholarly_index", "preprint_archive", "dataset")
 MAX_PLANNING_RESPONSE_CHARS = 262_144
 
 
@@ -40,6 +41,27 @@ def build_planning_prompt(
     if mode not in _LIMITS:
         fail("invalid_mode", "mode", "Неизвестный режим.")
     minimum = {"search": 1, "deep": 2, "ultra": 3, "academic": 2}[mode]
+    maximum = min(20, _LIMITS[mode][0], _LIMITS[mode][1])
+    family_instruction = (
+        "Для Search у каждого листа source_family должен быть только web. "
+        "Разные семейства в этом режиме не требуются. "
+        if mode == "search"
+        else "Допустимые source_family: "
+        + ", ".join(_FAMILIES)
+        + ". Нужно не менее "
+        + str(minimum)
+        + " разных семейств. "
+    )
+    query_instruction = (
+        "Для web пишите обычные поисковые слова без префиксов arXiv. "
+        if mode == "search"
+        else "Для preprint_archive query должен начинаться с all:, ti:, abs:, au: или cat: "
+        "без пробела после двоеточия; если в вопросе указан ID arXiv с версией vN, "
+        "используйте id_list:IDvN. Для web и scholarly_index пишите обычные "
+        "поисковые слова без префиксов arXiv. "
+        "Для official ищите публикации соответствующего учреждения или создателя "
+        "метода; принадлежность сайта и независимость еще требуют проверки. "
+    )
     context = ""
     if decomposition is not None:
         if (
@@ -86,6 +108,8 @@ def build_planning_prompt(
         "на вопрос. Верните ровно один JSON с полями leaves, rival_hypotheses, "
         "protocol. leaves — массив объектов с ровно leaf_id, query, source_family, "
         "concept_groups. concept_groups — массив из 1–8 массивов строковых синонимов "
+        "(1–12 терминов в группе, обычно 3–80 символов; двухсимвольное буквенно-цифровое "
+        "научное обозначение вроде F1 допустимо только если оно буквально есть в вопросе). "
         '(например, [["происхождение", "источник"], ["метаданные"]]); '
         "не используйте объекты внутри групп. Каждая группа должна "
         "быть представлена в будущем источнике; разделяйте предметные понятия, чтобы "
@@ -94,14 +118,9 @@ def build_planning_prompt(
         "хотя бы один английский термин. Не создавайте отдельную группу из слов "
         "«определение», «документация» или «модель данных», если они не являются "
         "предметом ответа; для простого Search достаточно двух предметных групп. "
-        "Допустимые source_family: "
-        f"{', '.join(_FAMILIES)}. leaf_id пишите как LEAF-001, LEAF-002 и далее. "
-        f"Нужно не менее {minimum} листьев и стольких же "
-        "разных семейств для режима, кроме Search, где достаточно одного web. "
-        "Для preprint_archive query должен начинаться с all:, ti:, abs:, au: или cat: "
-        "без пробела после двоеточия; если в вопросе указан ID arXiv с версией vN, "
-        "используйте id_list:IDvN. Для web и "
-        "scholarly_index пишите обычные поисковые слова без префиксов arXiv. "
+        f"{family_instruction}leaf_id пишите как LEAF-001, LEAF-002 и далее. "
+        f"Нужно от {minimum} до {maximum} листьев; query содержит 5–500 символов. "
+        f"{query_instruction}"
         "Для Ultra дайте две конкурирующие "
         "rival_hypotheses, для остальных — пустой массив. Для Academic protocol — "
         "объект с ровно search_rule, screening_rule, synthesis_rule, reporting_rule; "
@@ -301,9 +320,10 @@ def parse_planning_proposal(
                 if type(term) is str:
                     cleaned = term.strip()
                     if (
-                        len(cleaned) == 2
+                        len(cleaned) in {1, 2}
                         and cleaned.isascii()
                         and cleaned.isupper()
+                        and not question_scoped_short_identifier(cleaned, question)
                         and any(
                             type(other) is str and len(other.strip()) >= 3
                             for other in raw_terms
@@ -324,6 +344,12 @@ def parse_planning_proposal(
         family = require_string(
             leaf["source_family"], f"proposal.leaves[{index}].source_family"
         )
+        if mode == "search" and family != "web":
+            fail(
+                "search_source_family_invalid",
+                f"proposal.leaves[{index}].source_family",
+                "Search исполняет только web-источники.",
+            )
         query = require_string(leaf["query"], f"proposal.leaves[{index}].query").strip()
         original_queries[leaf_id] = query
         if (

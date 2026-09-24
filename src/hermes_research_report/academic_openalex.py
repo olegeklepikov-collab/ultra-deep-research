@@ -9,8 +9,9 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
+from .academic_publisher_raw import _validated_url
 from .beta_acquisition import AcquisitionError, _safe_url
 from .beta_modes import verify_beta_mode_plan
 from .canonical import with_receipt_hash
@@ -173,7 +174,14 @@ def _metadata_rows(
                 try:
                     safe_urls[name] = _safe_url(location_url)
                 except AcquisitionError:
-                    safe_urls[name] = None
+                    try:
+                        host = urlsplit(location_url).hostname
+                        if not host:
+                            raise AcquisitionError("openalex_oa_host_missing")
+                        _validated_url(location_url, host, max_query_chars=1800)
+                        safe_urls[name] = location_url
+                    except (AcquisitionError, ValueError, TypeError):
+                        safe_urls[name] = None
             oa_location = {
                 "is_oa_reported": location["is_oa"],
                 "landing_page_url": safe_urls["landing_page_url"],

@@ -1069,8 +1069,10 @@ def reconcile_provider_lifecycle(request: object) -> dict[str, Any]:
             "request.current_state",
             "Неизвестное состояние операции.",
         )
-    seen: set[str] = set()
+    seen: dict[str, dict[str, Any]] = {}
     duplicate_ids: list[str] = []
+    conflicting_ids: set[str] = set()
+    conflicting_events: list[dict[str, Any]] = []
     rejected_ids: list[str] = []
     unknown_events: list[dict[str, Any]] = []
     valid_events: list[dict[str, Any]] = []
@@ -1120,10 +1122,6 @@ def reconcile_provider_lifecycle(request: object) -> dict[str, Any]:
                 "Неизвестен статус времени события.",
             )
         raw_sequences.append(sequence)
-        if event_id in seen:
-            duplicate_ids.append(event_id)
-            continue
-        seen.add(event_id)
         normalized = {
             "event_id": event_id,
             "sequence": sequence,
@@ -1146,9 +1144,21 @@ def reconcile_provider_lifecycle(request: object) -> dict[str, Any]:
         if state not in _LIFECYCLE_STATES:
             rejected_ids.append(event_id)
             continue
+        if event_id in seen:
+            duplicate_ids.append(event_id)
+            if seen[event_id]["state"] != state:
+                if event_id not in conflicting_ids:
+                    conflicting_events.append(seen[event_id])
+                conflicting_ids.add(event_id)
+                conflicting_events.append(normalized)
+            continue
+        seen[event_id] = normalized
         valid_events.append(normalized)
     out_of_order = any(left > right for left, right in pairwise(raw_sequences))
     valid_events.sort(key=lambda row: (row["sequence"], row["event_id"]))
+    valid_events = [
+        event for event in valid_events if event["event_id"] not in conflicting_ids
+    ]
     state_history = [current_state]
     transition_rejected_ids = []
     applied_events = []
@@ -1175,14 +1185,14 @@ def reconcile_provider_lifecycle(request: object) -> dict[str, Any]:
             )
         if readback != state_history[-1]:
             state_history.append(readback)
-    accepted = require_bool(data["provider_accepted"], "request.provider_accepted")
+    require_bool(data["provider_accepted"], "request.provider_accepted")
     timed_out = require_bool(data["timeout_after_send"], "request.timeout_after_send")
     result_available = require_bool(
         data["result_available"], "request.result_available"
     )
     final_state = state_history[-1]
     reconciliation_required = False
-    if accepted and timed_out and readback is None:
+    if (timed_out or conflicting_ids) and readback is None:
         final_state = "unknown_outcome"
         state_history.append(final_state)
         reconciliation_required = True
@@ -1240,6 +1250,8 @@ def reconcile_provider_lifecycle(request: object) -> dict[str, Any]:
             "final_state": final_state,
             "applied_event_ids": [event["event_id"] for event in applied_events],
             "duplicate_event_ids": duplicate_ids,
+            "conflicting_event_ids": sorted(conflicting_ids),
+            "conflicting_event_observations": conflicting_events,
             "rejected_event_ids": rejected_ids,
             "transition_rejected_event_ids": transition_rejected_ids,
             "unknown_events": unknown_events,

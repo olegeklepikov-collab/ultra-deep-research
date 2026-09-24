@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
             "schema_version": 1,
             "run_id": run_id,
             "wall_seconds": 120,
-            "max_estimated_cost_usd": 0.01,
+            "max_estimated_cost_usd": attempt.get("max_estimated_cost_usd"),
             "model_calls": 1,
         }
         prompt_hashes = {
@@ -76,9 +76,11 @@ def main(argv: list[str] | None = None) -> int:
                     question=question,
                     profile=args.profile,
                     legacy_rule_instruction=legacy,
+                    legacy_coverage_instruction=legacy_coverage,
                 ).encode()
             ).hexdigest()
             for legacy in (False, True)
+            for legacy_coverage in (False, True)
         }
         raw = (
             read_private_bytes(output / "model.raw.json", maximum=1_048_576)
@@ -106,12 +108,13 @@ def main(argv: list[str] | None = None) -> int:
         ):
             raise ValueError("domain_saved_attempt_not_bound")
         validate_tool_free_observation(
-            max_estimated_cost_usd=0.01,
+            max_estimated_cost_usd=attempt["max_estimated_cost_usd"],
             usage=usage,
             trace=trace,
             provider=PROVIDER,
             model=MODEL,
             max_total_tokens=attempt["max_total_tokens"],
+            preserve_completed_cost_overrun=True,
         )
         decomposition, run = persist_domain_result(
             output=output,
@@ -122,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             usage=usage,
             trace=trace,
             reconciled=True,
+            cost_limit_usd=attempt["max_estimated_cost_usd"],
         )
         receipt = with_receipt_hash(
             {

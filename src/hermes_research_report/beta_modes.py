@@ -30,7 +30,13 @@ _SENSITIVE = re.compile(
 _MODES = {"search", "deep", "ultra", "academic"}
 _MIN_LEAVES = {"search": 1, "deep": 2, "ultra": 3, "academic": 2}
 _MIN_FAMILIES = {"search": 1, "deep": 2, "ultra": 3, "academic": 2}
-_PROFILED_FAMILIES = {"web", "scholarly_index", "preprint_archive", "dataset"}
+_PROFILED_FAMILIES = {
+    "web",
+    "official",
+    "scholarly_index",
+    "preprint_archive",
+    "dataset",
+}
 _HARD_CAPS = {
     "search": (2, 3, 1, 120, 0.02),
     "deep": (8, 16, 4, 600, 0.20),
@@ -124,6 +130,17 @@ def validate_public_protocol_rule(value: object) -> str:
     return _public_text(value, "academic_protocol.rule", maximum=1600)
 
 
+def question_scoped_short_identifier(term: str, question: str) -> bool:
+    """Allow an exact two-character letter-digit label only when the question names it."""
+    return bool(
+        re.fullmatch(r"[A-Z][0-9]", term)
+        and re.search(
+            r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])",
+            question,
+        )
+    )
+
+
 def _hash(value: object, path: str) -> str:
     result = require_string(value, path)
     if not _HASH.fullmatch(result):
@@ -215,8 +232,16 @@ def build_beta_mode_plan(request: object) -> dict[str, Any]:
                 terms = []
                 for term_index, raw_term in enumerate(raw_terms):
                     term = _public_text(
-                        raw_term, f"{group_path}[{term_index}]", minimum=3
+                        raw_term, f"{group_path}[{term_index}]", minimum=2
                     )
+                    if len(term) < 3 and not question_scoped_short_identifier(
+                        term, question
+                    ):
+                        fail(
+                            "unsafe_public_text",
+                            f"{group_path}[{term_index}]",
+                            "Короткое обозначение отсутствует в вопросе.",
+                        )
                     if len(term) > 80 or term.casefold() in all_terms:
                         fail(
                             "concept_term_invalid_or_duplicate",

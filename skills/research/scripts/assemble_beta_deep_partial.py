@@ -223,7 +223,7 @@ def assemble_deep_partial(
             "\n## Непринятый модельный тезис\n\n"
             f"{candidate['claim']}\n\n"
             f"Точный фрагмент проверенного отрывка: «{candidate['quote']}». "
-            f"Смысловая проверка: {semantic_check['verdict']}; {semantic_check.get('rationale', 'смысловая опора не установлена')}. "
+            f"Смысловая проверка: { {'overstated': 'формулировка сильнее доказательств', 'contradicted': 'тезис противоречит материалу', 'unclear': 'смысловая опора не установлена'}[semantic_check['verdict']] }; {semantic_check.get('rationale', 'требуется дополнительная проверка')}. "
             "Это гипотеза или отклонённое предположение, не вывод исследования.\n"
         )
     appendix = ""

@@ -7,7 +7,7 @@ import math
 import re
 from typing import Any
 
-from .canonical import with_receipt_hash
+from .canonical import sha256_json, with_receipt_hash
 from .errors import (
     fail,
     require_bool,
@@ -90,6 +90,7 @@ _EVIDENCE_LINK_SCHEMA = {
         "role": {"enum": sorted(_LINK_ROLES)},
         "semantic_status": {"enum": sorted(_SEMANTIC_STATES)},
         "semantic_reviewer_ref": _NULLABLE_TEXT,
+        "semantic_target_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "current": {"type": "boolean"},
         "scope_match": {"type": "boolean"},
         "independent": {"type": "boolean"},
@@ -513,6 +514,29 @@ def _calculation(
     return not issues, result, issues
 
 
+def semantic_review_target_hash(claim: dict, link: dict) -> str:
+    """Bind a review to the exact proposition and supporting source version.
+
+    This identifies the reviewed material; it does not authenticate the reviewer
+    or execute the semantic review.
+    """
+    return sha256_json(
+        {
+            "claim": claim,
+            "evidence": {
+                key: link[key]
+                for key in (
+                    "fragment_ref",
+                    "fragment_hash",
+                    "quote",
+                    "role",
+                    "scope_match",
+                )
+            },
+        }
+    )
+
+
 def evaluate_claim(request: object) -> dict[str, Any]:
     data = require_mapping(request, "request")
     require_exact_keys(
@@ -640,7 +664,12 @@ def evaluate_claim(request: object) -> dict[str, Any]:
     for index, raw in enumerate(evidence_rows):
         path = f"request.evidence_links[{index}]"
         row = require_mapping(raw, path)
-        require_exact_keys(row, set(_EVIDENCE_LINK_SCHEMA["required"]), path)
+        require_exact_keys(
+            row,
+            set(_EVIDENCE_LINK_SCHEMA["required"])
+            | ({"semantic_target_hash"} if "semantic_target_hash" in row else set()),
+            path,
+        )
         link_id = require_string(row["link_id"], f"{path}.link_id")
         if link_id in link_ids:
             fail("duplicate_evidence_link", f"{path}.link_id", "Повторная связь.")
@@ -678,6 +707,10 @@ def evaluate_claim(request: object) -> dict[str, Any]:
                 f"{path}.semantic_reviewer_ref",
                 "Для смысловой проверки нужен рецензент.",
             )
+        target_hash = row.get("semantic_target_hash")
+        if target_hash is not None:
+            target_hash = _hash(target_hash, f"{path}.semantic_target_hash")
+        target_matches = target_hash == semantic_review_target_hash(claim, row)
         links.append(
             {
                 "link_id": link_id,
@@ -688,6 +721,8 @@ def evaluate_claim(request: object) -> dict[str, Any]:
                 "exact_quote_match": True,
                 "semantic_status": semantic,
                 "semantic_reviewer_ref": reviewer,
+                "semantic_target_hash": target_hash,
+                "semantic_target_matches": target_matches,
                 "current": require_bool(row["current"], f"{path}.current"),
                 "scope_match": require_bool(row["scope_match"], f"{path}.scope_match"),
                 "independent": require_bool(row["independent"], f"{path}.independent"),
@@ -714,6 +749,11 @@ def evaluate_claim(request: object) -> dict[str, Any]:
         qualification["calculation_reproducible"] = False
 
     issues = list(calculation_issues)
+    if any(
+        link["semantic_status"] == "verified" and not link["semantic_target_matches"]
+        for link in links
+    ):
+        issues.append("semantic_review_target_unbound_or_changed")
     if proposition_count != 1:
         issues.append("claim_not_atomic")
     if kind == "inference" and not derivation_refs:
@@ -731,6 +771,7 @@ def evaluate_claim(request: object) -> dict[str, Any]:
         and link["current"]
         and link["scope_match"]
         and link["semantic_status"] == "verified"
+        and link["semantic_target_matches"]
     ]
     active_contradiction = [
         link
@@ -739,6 +780,7 @@ def evaluate_claim(request: object) -> dict[str, Any]:
         and link["current"]
         and link["scope_match"]
         and link["semantic_status"] == "verified"
+        and link["semantic_target_matches"]
     ]
     withdrawn = require_bool(data["withdrawn"], "request.withdrawn")
     if withdrawn:

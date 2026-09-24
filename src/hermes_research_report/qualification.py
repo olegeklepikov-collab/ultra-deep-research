@@ -171,6 +171,76 @@ PROFILE_QUALIFICATION_SCHEMA = {
         },
     },
 }
+PROFILE_QUALIFICATION_SCHEMA["properties"]["primary_reviews"] = {
+    "type": "array",
+    "maxItems": 10000,
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "task_id",
+            "generator_ref",
+            "reviewer_ref",
+            "review_input",
+            "materials",
+            "judgments",
+        ],
+        "properties": {
+            "task_id": {"type": "string", "minLength": 1},
+            "generator_ref": {"type": "string", "minLength": 1},
+            "reviewer_ref": {"type": "string", "minLength": 1},
+            "review_input": {"type": "string", "minLength": 1},
+            "materials": {
+                "type": "array",
+                "maxItems": 10000,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["source_ref", "source_author_ref", "text", "sha256"],
+                    "properties": {
+                        "source_ref": {"type": "string", "minLength": 1},
+                        "source_author_ref": {"type": "string", "minLength": 1},
+                        "text": {"type": "string", "minLength": 1},
+                        "sha256": {"type": "string", "minLength": 1},
+                    },
+                },
+            },
+            "judgments": {
+                "type": "array",
+                "maxItems": 10000,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "claim_id",
+                        "claim",
+                        "source_ref",
+                        "start",
+                        "end",
+                        "quote",
+                        "verdict",
+                        "rationale",
+                        "disagreement",
+                    ],
+                    "properties": {
+                        "claim_id": {"type": "string", "minLength": 1},
+                        "claim": {"type": "string", "minLength": 1},
+                        "source_ref": {"type": "string", "minLength": 1},
+                        "start": {"type": "integer", "minimum": 0},
+                        "end": {"type": "integer", "minimum": 0},
+                        "quote": {"type": "string", "minLength": 1},
+                        "verdict": {
+                            "enum": ["supported", "contradicted", "unresolved"]
+                        },
+                        "rationale": {"type": "string", "minLength": 1},
+                        "disagreement": {"type": ["string", "null"]},
+                    },
+                },
+            },
+        },
+    },
+}
+
 DEPTH_COMPARISON_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -353,7 +423,12 @@ def assess_deployment_candidate(request: object) -> dict[str, Any]:
 
 def evaluate_profile_qualification(request: object) -> dict[str, Any]:
     d = require_mapping(request, "request")
-    require_exact_keys(d, set(PROFILE_QUALIFICATION_SCHEMA["required"]), "request")
+    review_inputs = d.get("primary_reviews", [])
+    require_exact_keys(
+        {k: v for k, v in d.items() if k != "primary_reviews"},
+        set(PROFILE_QUALIFICATION_SCHEMA["required"]),
+        "request",
+    )
     if d["schema_version"] != 1:
         fail(
             "unsupported_schema",
@@ -395,6 +470,7 @@ def evaluate_profile_qualification(request: object) -> dict[str, Any]:
         "request.suite.thresholds.critical_failure_max",
     )
     results = []
+    task_ids = set()
     for i, raw in enumerate(require_list(d["task_results"], "request.task_results")):
         p = f"request.task_results[{i}]"
         row = require_mapping(raw, p)
@@ -406,11 +482,21 @@ def evaluate_profile_qualification(request: object) -> dict[str, Any]:
                 "correctness",
                 "critical_failures",
                 "review_complete",
-            },
+            }
+            | (set(row) & {"answer_sha256"}),
             p,
         )
+        task_id = require_string(row["task_id"], f"{p}.task_id")
+        if task_id in task_ids:
+            fail("duplicate_task_result", f"{p}.task_id", "Повтор результата задачи.")
+        task_ids.add(task_id)
         results.append(
             {
+                "answer_sha256": require_string(
+                    row["answer_sha256"], f"{p}.answer_sha256"
+                )
+                if "answer_sha256" in row
+                else None,
                 "task_id": require_string(row["task_id"], f"{p}.task_id"),
                 "task_class": require_string(row["task_class"], f"{p}.task_class"),
                 "correctness": _finite(row["correctness"], f"{p}.correctness"),
@@ -422,11 +508,34 @@ def evaluate_profile_qualification(request: object) -> dict[str, Any]:
                 ),
             }
         )
+    from .security_controls import assess_security_control
+
+    reviews = {}
+    for raw in require_list(review_inputs, "request.primary_reviews"):
+        review = assess_security_control(
+            {"schema_version": 1, "control_type": "primary_review", "payload": raw}
+        )
+        if review["task_id"] in reviews:
+            fail(
+                "duplicate_primary_review",
+                "request.primary_reviews",
+                "Повтор проверки задачи.",
+            )
+        reviews[review["task_id"]] = review
+    review_bound = bool(results) and set(reviews) == {r["task_id"] for r in results}
+    review_bound = review_bound and all(
+        reviews[r["task_id"]]["independent_metric_eligible"]
+        and reviews[r["task_id"]]["answer_sha256"] == r["answer_sha256"]
+        and reviews[r["task_id"]]["correctness"] == r["correctness"]
+        and reviews[r["task_id"]]["critical_failures"] == r["critical_failures"]
+        for r in results
+    )
     covered = {r["task_class"] for r in results}
     mean = sum(r["correctness"] for r in results) / len(results) if results else 0
     failures = sum(r["critical_failures"] for r in results)
     qualified = (
-        sealed
+        review_bound
+        and sealed
         and classes.issubset(covered)
         and mean >= minimum
         and failures <= max_fail
@@ -446,6 +555,10 @@ def evaluate_profile_qualification(request: object) -> dict[str, Any]:
                 "risk": normalized["risk"],
             },
             "mean_correctness": mean,
+            "primary_review_bound": review_bound,
+            "primary_review_receipts": list(reviews.values()),
+            "independent_metric_eligible": review_bound,
+            "external_product_acceptance": False,
             "critical_failures": failures,
             "other_profiles_qualified": [],
             "persistence_applied": False,
@@ -573,3 +686,8 @@ def assess_utility(request: object) -> dict[str, Any]:
             "commercial_effect_equals_utility": False,
         }
     )
+
+
+PROFILE_QUALIFICATION_SCHEMA["properties"]["task_results"]["items"]["properties"][
+    "answer_sha256"
+] = {"type": "string", "pattern": "^[0-9a-f]{64}$"}

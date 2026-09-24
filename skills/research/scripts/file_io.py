@@ -88,7 +88,11 @@ def load_json(path: Path) -> tuple[object, str]:
         object_pairs_hook=_unique_object,
         parse_constant=_reject_constant,
     )
-    return value, hashlib.sha256(raw).hexdigest()
+    digest = hashlib.sha256(raw).hexdigest()
+    from hermes_research_report.turn_trace import artifact_read
+
+    artifact_read(path, value, digest)
+    return value, digest
 
 
 def write_exclusive_json(path: Path, value: object) -> str:
@@ -119,4 +123,10 @@ def write_exclusive_json(path: Path, value: object) -> str:
         raise
     finally:
         temporary.unlink(missing_ok=True)
-    return hashlib.sha256(encoded).hexdigest()
+    digest = hashlib.sha256(encoded).hexdigest()
+    # Existing artifacts remain authoritative. The optional inherited turn journal
+    # stores only references and hashes after the exclusive file commit succeeds.
+    from hermes_research_report.turn_trace import artifact_written
+
+    artifact_written(path, value, digest)
+    return digest

@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from datetime import datetime
 from typing import Any
 
+from .academic_review_bindings import (
+    extraction_binding_issues,
+    rob_binding_issues,
+    sensitivity_binding_issues,
+)
 from .canonical import sha256_json, with_receipt_hash
 from .errors import (
     fail,
@@ -119,6 +126,76 @@ ACADEMIC_SYNTHESIS_GATE_SCHEMA["properties"]["results"] = {
     "items": {"type": "object"},
 }
 COMPUTATION_REPLAY_ASSESS_SCHEMA = _schema(["schema_version", "bundle", "replay"])
+PRISMA_FLOW_ACCOUNT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "schema_version",
+        "review_id",
+        "fulltext_input_refs",
+        "dispositions",
+        "not_retrieved_refs",
+    ],
+    "properties": {
+        "schema_version": {"const": 1},
+        "review_id": _TEXT,
+        "fulltext_input_refs": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": _TEXT,
+        },
+        "dispositions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["record_ref", "disposition", "decision_ref"],
+                "properties": {
+                    "record_ref": _TEXT,
+                    "disposition": {"enum": ["include", "exclude", "pending"]},
+                    "decision_ref": _TEXT,
+                },
+            },
+        },
+        "not_retrieved_refs": {
+            "type": "array",
+            "uniqueItems": True,
+            "items": _TEXT,
+        },
+    },
+}
+FIXED_EFFECT_COMPUTE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "schema_version",
+        "synthesis_ref",
+        "formula",
+        "confidence_z",
+        "records",
+    ],
+    "properties": {
+        "schema_version": {"const": 1},
+        "synthesis_ref": _TEXT,
+        "formula": {"const": "inverse_variance_fixed_effect"},
+        "confidence_z": {"type": "number", "exclusiveMinimum": 0},
+        "records": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["result_ref", "estimate", "standard_error"],
+                "properties": {
+                    "result_ref": _TEXT,
+                    "estimate": {"type": "number"},
+                    "standard_error": {"type": "number", "exclusiveMinimum": 0},
+                },
+            },
+        },
+    },
+}
 
 _HASH_CHARS = set("0123456789abcdef")
 
@@ -363,6 +440,7 @@ def adjudicate_screening(request: object) -> dict[str, Any]:
     stage = require_string(data["stage"], "request.stage")
     decisions = []
     reviewers = set()
+    decision_ids = set()
     for index, raw in enumerate(require_list(data["decisions"], "request.decisions")):
         path = f"request.decisions[{index}]"
         item = require_mapping(raw, path)
@@ -379,6 +457,14 @@ def adjudicate_screening(request: object) -> dict[str, Any]:
         }
         require_exact_keys(item, fields, path)
         reviewer = require_string(item["reviewer_id"], f"{path}.reviewer_id")
+        decision_id = require_string(item["decision_id"], f"{path}.decision_id")
+        if decision_id in decision_ids:
+            fail(
+                "duplicate_screening_decision",
+                path,
+                "Идентификаторы решений должны различаться.",
+            )
+        decision_ids.add(decision_id)
         if reviewer in reviewers:
             fail("duplicate_screening_reviewer", path, "Нужны разные проверяющие.")
         reviewers.add(reviewer)
@@ -408,16 +494,24 @@ def adjudicate_screening(request: object) -> dict[str, Any]:
                 "created_at": _time(item["created_at"], f"{path}.created_at"),
             }
         )
+    if len(decisions) < 2:
+        fail(
+            "screening_decisions_missing",
+            "request.decisions",
+            "Нужны минимум два исходных решения.",
+        )
     independent = all(
         decision["independent_first"] and decision["before_disclosure"]
         for decision in decisions
     )
     disagreement = len({decision["decision"] for decision in decisions}) > 1
     adjudication = data["adjudication"]
-    adjudication_record = None
+    adjudication_record: dict[str, Any] | None = None
     issues = []
     if not independent:
         issues.append("independent_first_decision_missing")
+    if not disagreement and decisions[0]["decision"] == "uncertain":
+        issues.append("screening_uncertainty_unresolved")
     if disagreement:
         if adjudication is None:
             issues.append("screening_adjudication_missing")
@@ -425,7 +519,8 @@ def adjudicate_screening(request: object) -> dict[str, Any]:
             item = require_mapping(adjudication, "request.adjudication")
             require_exact_keys(
                 item,
-                {"adjudicator_id", "decision", "reason", "created_at"},
+                {"adjudicator_id", "decision", "reason", "created_at"}
+                | ({"evidence"} if "evidence" in item else set()),
                 "request.adjudication",
             )
             adjudicated = require_string(
@@ -447,6 +542,76 @@ def adjudicate_screening(request: object) -> dict[str, Any]:
                     item["created_at"], "request.adjudication.created_at"
                 ),
             }
+            if adjudication_record["adjudicator_id"] in reviewers:
+                issues.append("screening_self_adjudication")
+            if _dt(adjudication_record["created_at"]) < max(
+                _dt(row["created_at"]) for row in decisions
+            ):
+                issues.append("screening_adjudication_precedes_decisions")
+            if "evidence" not in item:
+                issues.append("screening_evidence_missing")
+            else:
+                evidence = require_mapping(
+                    item["evidence"], "request.adjudication.evidence"
+                )
+                require_exact_keys(
+                    evidence,
+                    {
+                        "criterion_ref",
+                        "decision_hashes",
+                        "source_ref",
+                        "source_sha256",
+                        "source_text",
+                        "quote",
+                        "char_start",
+                        "char_end",
+                    },
+                    "request.adjudication.evidence",
+                )
+                criterion = require_string(
+                    evidence["criterion_ref"], "evidence.criterion_ref"
+                )
+                source_ref = require_string(
+                    evidence["source_ref"], "evidence.source_ref"
+                )
+                source_text = require_string(
+                    evidence["source_text"], "evidence.source_text"
+                )
+                source_hash = require_string(
+                    evidence["source_sha256"], "evidence.source_sha256"
+                )
+                quote = require_string(evidence["quote"], "evidence.quote")
+                start = require_int(
+                    evidence["char_start"], "evidence.char_start", minimum=0
+                )
+                end = require_int(evidence["char_end"], "evidence.char_end", minimum=0)
+                hashes = require_list(
+                    evidence["decision_hashes"], "evidence.decision_hashes"
+                )
+                expected_hashes = [
+                    sha256_json(row)
+                    for row in require_list(data["decisions"], "request.decisions")
+                ]
+                if criterion not in {row["criterion_ref"] for row in decisions}:
+                    issues.append("screening_criterion_unbound")
+                if hashes != expected_hashes:
+                    issues.append("screening_decisions_unbound")
+                if (
+                    not (0 <= start < end <= len(source_text))
+                    or source_text[start:end] != quote
+                    or hashlib.sha256(source_text.encode()).hexdigest() != source_hash
+                ):
+                    issues.append("screening_source_unbound")
+                adjudication_record["evidence"] = {
+                    "criterion_ref": criterion,
+                    "decision_hashes": hashes,
+                    "source_ref": source_ref,
+                    "source_sha256": source_hash,
+                    "quote": quote,
+                    "char_start": start,
+                    "char_end": end,
+                    "source_authenticity_verified": False,
+                }
     elif adjudication is not None:
         fail(
             "unnecessary_adjudication",
@@ -454,7 +619,9 @@ def adjudicate_screening(request: object) -> dict[str, Any]:
             "Разногласие отсутствует.",
         )
     final_decision = (
-        adjudication_record["decision"]
+        None
+        if issues
+        else adjudication_record["decision"]
         if adjudication_record
         else decisions[0]["decision"]
         if decisions and not disagreement
@@ -610,6 +777,31 @@ def resolve_study_graph(request: object) -> dict[str, Any]:
     )
 
 
+def _extraction_value(text: str, path: str) -> object:
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("duplicate key")
+            result[key] = value
+        return result
+
+    def nonfinite(value):
+        raise ValueError("nonfinite number")
+
+    try:
+        value = json.loads(text, object_pairs_hook=pairs, parse_constant=nonfinite)
+        # Also rejects overflow such as 1e999, which bypasses parse_constant.
+        json.dumps(value, allow_nan=False)
+        return value
+    except (ValueError, TypeError, RecursionError):
+        fail(
+            "invalid_extraction_value_json",
+            path,
+            "Нужно корректное JSON-значение без повторных ключей и неконечных чисел.",
+        )
+
+
 def assess_extraction(request: object) -> dict[str, Any]:
     data = require_mapping(request, "request")
     require_exact_keys(
@@ -632,15 +824,21 @@ def assess_extraction(request: object) -> dict[str, Any]:
     if schema_pilot != "pass" or codebook_pilot != "pass":
         issues.append("extraction_pilot_missing")
     fields = []
+    field_ids: set[str] = set()
     for index, raw in enumerate(require_list(data["fields"], "request.fields")):
         path = f"request.fields[{index}]"
         item = require_mapping(raw, path)
         require_exact_keys(
             item,
-            {"field_id", "material", "values", "adjudication"},
+            {"field_id", "material", "values", "adjudication"}
+            | ({"primary_verification"} if "primary_verification" in item else set()),
             path,
         )
         field_id = require_string(item["field_id"], f"{path}.field_id")
+        if field_id in field_ids:
+            fail("duplicate_extraction_field", path, "Поле извлечения повторяется.")
+        field_ids.add(field_id)
+        field_issues = []
         material = require_bool(item["material"], f"{path}.material")
         values = []
         signatures = set()
@@ -685,6 +883,12 @@ def assess_extraction(request: object) -> dict[str, Any]:
                 }
             )
         distinct_values = sorted({value["value_json"] for value in values})
+        for value_index, value in enumerate(values):
+            parsed = _extraction_value(
+                value["value_json"], f"{path}.values[{value_index}].value_json"
+            )
+            if material and parsed is None:
+                field_issues.append(f"material_extraction_value_missing:{field_id}")
         conflict = len(distinct_values) > 1
         adjudication = item["adjudication"]
         adjudication_record = None
@@ -713,16 +917,39 @@ def assess_extraction(request: object) -> dict[str, Any]:
                     f"{path}.adjudication.source_fragment_ref",
                 ),
             }
-        if material and len(signatures) < 2 and adjudication_record is None:
-            issues.append(f"material_double_extraction_missing:{field_id}")
+            parsed = _extraction_value(
+                adjudication_record["value_json"], f"{path}.adjudication.value_json"
+            )
+            if material and parsed is None:
+                field_issues.append(f"material_extraction_value_missing:{field_id}")
+        if material and len(signatures) < 2:
+            field_issues.append(f"material_double_extraction_missing:{field_id}")
+        if len({value["route_id"] for value in values}) != len(values):
+            field_issues.append(f"duplicate_extraction_route:{field_id}")
+        if not values:
+            field_issues.append(f"extraction_values_missing:{field_id}")
         if conflict and adjudication_record is None:
-            issues.append(f"extraction_conflict_unresolved:{field_id}")
+            field_issues.append(f"extraction_conflict_unresolved:{field_id}")
+        if adjudication_record and adjudication_record["adjudicator_id"] in {
+            value["extractor_id"] for value in values
+        }:
+            field_issues.append(f"extraction_self_adjudication:{field_id}")
         accepted_value = (
             adjudication_record["value_json"]
             if adjudication_record
             else distinct_values[0]
             if len(distinct_values) == 1
             else None
+        )
+        if material:
+            field_issues.extend(
+                extraction_binding_issues(item, accepted_value, schema, codebook)
+            )
+        eligible = (
+            accepted_value is not None
+            and not field_issues
+            and schema_pilot == "pass"
+            and codebook_pilot == "pass"
         )
         fields.append(
             {
@@ -732,10 +959,15 @@ def assess_extraction(request: object) -> dict[str, Any]:
                 "independent_route_count": len(signatures),
                 "conflict": conflict,
                 "adjudication": adjudication_record,
-                "accepted_value_json": accepted_value,
-                "synthesis_eligible": accepted_value is not None,
+                "accepted_value_json": accepted_value if eligible else None,
+                "synthesis_eligible": eligible,
+                "primary_verification": item.get("primary_verification"),
+                "issues": field_issues,
             }
         )
+        issues.extend(field_issues)
+    if not fields:
+        issues.append("extraction_fields_missing")
     return with_receipt_hash(
         {
             "contract": "ExtractionDecisionReceipt",
@@ -861,12 +1093,166 @@ def assess_prisma(request: object) -> dict[str, Any]:
     )
 
 
+def assess_prisma_flow_accounting(request: object) -> dict[str, Any]:
+    """Reconcile full-text dispositions without lost or overlapping records."""
+
+    data = require_mapping(request, "request")
+    require_exact_keys(
+        data,
+        {
+            "schema_version",
+            "review_id",
+            "fulltext_input_refs",
+            "dispositions",
+            "not_retrieved_refs",
+        },
+        "request",
+    )
+    _version(data)
+    review_id = require_string(data["review_id"], "request.review_id")
+    input_refs = _strings(data["fulltext_input_refs"], "request.fulltext_input_refs")
+    not_retrieved = _strings(data["not_retrieved_refs"], "request.not_retrieved_refs")
+    input_set = set(input_refs)
+    issues = [
+        f"not_retrieved_overlaps_fulltext:{ref}"
+        for ref in sorted(input_set & set(not_retrieved))
+    ]
+    dispositions: list[dict[str, str]] = []
+    seen: dict[str, str] = {}
+    counts = {"include": 0, "exclude": 0, "pending": 0}
+    for index, raw in enumerate(
+        require_list(data["dispositions"], "request.dispositions")
+    ):
+        path = f"request.dispositions[{index}]"
+        item = require_mapping(raw, path)
+        require_exact_keys(item, {"record_ref", "disposition", "decision_ref"}, path)
+        record_ref = require_string(item["record_ref"], f"{path}.record_ref")
+        disposition = require_string(item["disposition"], f"{path}.disposition")
+        if disposition not in counts:
+            fail(
+                "invalid_disposition",
+                f"{path}.disposition",
+                "Неизвестный исход отбора.",
+            )
+        if record_ref not in input_set:
+            issues.append(f"unknown_fulltext_record:{record_ref}")
+        if record_ref in seen:
+            issues.append(f"overlapping_dispositions:{record_ref}")
+        else:
+            seen[record_ref] = disposition
+            counts[disposition] += 1
+        dispositions.append(
+            {
+                "record_ref": record_ref,
+                "disposition": disposition,
+                "decision_ref": require_string(
+                    item["decision_ref"], f"{path}.decision_ref"
+                ),
+            }
+        )
+    for ref in sorted(input_set - set(seen)):
+        issues.append(f"lost_record:{ref}")
+    accepted = not issues and sum(counts.values()) == len(input_refs)
+    return with_receipt_hash(
+        {
+            "contract": "PrismaFlowAccountingReceipt",
+            "status": "accepted" if accepted else "blocked",
+            "review_id": review_id,
+            "fulltext_input_count": len(input_refs),
+            "counts": counts if accepted else None,
+            "not_retrieved_count": len(not_retrieved),
+            "not_retrieved_refs": not_retrieved,
+            "dispositions": dispositions,
+            "issues": sorted(set(issues)),
+            "counts_accepted": accepted,
+        }
+    )
+
+
+def compute_fixed_effect_estimate(request: object) -> dict[str, Any]:
+    """Compute a preregistered inverse-variance fixed-effect estimate."""
+
+    data = require_mapping(request, "request")
+    require_exact_keys(
+        data,
+        {"schema_version", "synthesis_ref", "formula", "confidence_z", "records"},
+        "request",
+    )
+    _version(data)
+    synthesis_ref = require_string(data["synthesis_ref"], "request.synthesis_ref")
+    formula = require_string(data["formula"], "request.formula")
+    if formula != "inverse_variance_fixed_effect":
+        fail(
+            "unregistered_synthesis_formula",
+            "request.formula",
+            "Формула не зарегистрирована.",
+        )
+    confidence_z = _finite(
+        data["confidence_z"], "request.confidence_z", minimum=0.000001
+    )
+    rows: list[dict[str, float | str]] = []
+    result_refs: set[str] = set()
+    for index, raw in enumerate(require_list(data["records"], "request.records")):
+        path = f"request.records[{index}]"
+        item = require_mapping(raw, path)
+        require_exact_keys(item, {"result_ref", "estimate", "standard_error"}, path)
+        result_ref = require_string(item["result_ref"], f"{path}.result_ref")
+        if result_ref in result_refs:
+            fail(
+                "duplicate_result", f"{path}.result_ref", "Повтор результата запрещён."
+            )
+        result_refs.add(result_ref)
+        estimate = _finite(item["estimate"], f"{path}.estimate")
+        standard_error = _finite(
+            item["standard_error"], f"{path}.standard_error", minimum=0.000001
+        )
+        rows.append(
+            {
+                "result_ref": result_ref,
+                "estimate": estimate,
+                "standard_error": standard_error,
+                "weight": round(1.0 / (standard_error * standard_error), 12),
+            }
+        )
+    if len(rows) < 2:
+        fail(
+            "insufficient_results",
+            "request.records",
+            "Требуются минимум два результата.",
+        )
+    total_weight = sum(float(row["weight"]) for row in rows)
+    pooled = (
+        sum(float(row["weight"]) * float(row["estimate"]) for row in rows)
+        / total_weight
+    )
+    pooled_se = math.sqrt(1.0 / total_weight)
+    return with_receipt_hash(
+        {
+            "contract": "FixedEffectComputationReceipt",
+            "status": "computed",
+            "synthesis_ref": synthesis_ref,
+            "formula": formula,
+            "records": rows,
+            "total_weight": total_weight,
+            "pooled_estimate": pooled,
+            "pooled_standard_error": pooled_se,
+            "confidence_z": confidence_z,
+            "confidence_interval": {
+                "lower": pooled - confidence_z * pooled_se,
+                "upper": pooled + confidence_z * pooled_se,
+            },
+            "invented_variance_used": False,
+        }
+    )
+
+
 def assess_risk_of_bias(request: object) -> dict[str, Any]:
     data = require_mapping(request, "request")
     require_exact_keys(data, {"schema_version", "assessments"}, "request")
     _version(data)
     assessments = []
     result_ids = set()
+    issues = []
     for index, raw in enumerate(
         require_list(data["assessments"], "request.assessments")
     ):
@@ -884,7 +1270,8 @@ def assess_risk_of_bias(request: object) -> dict[str, Any]:
                 "algorithmic_judgement",
                 "final_judgement",
                 "override_reason",
-            },
+            }
+            | (set(item) & {"domains", "consequence_for_synthesis"}),
             path,
         )
         result_id = require_string(item["result_id"], f"{path}.result_id")
@@ -939,6 +1326,8 @@ def assess_risk_of_bias(request: object) -> dict[str, Any]:
                 path,
                 "Переопределение требует основания.",
             )
+        item_issues = rob_binding_issues(item)
+        issues.extend(item_issues)
         assessments.append(
             {
                 "assessment_id": require_string(
@@ -954,12 +1343,18 @@ def assess_risk_of_bias(request: object) -> dict[str, Any]:
                 "algorithmic_judgement": algorithmic,
                 "final_judgement": final,
                 "override_reason": override,
+                "domains": item.get("domains", []),
+                "consequence_for_synthesis": item.get("consequence_for_synthesis"),
+                "issues": item_issues,
             }
         )
+    if not assessments:
+        issues.append("rob_assessments_missing")
     return with_receipt_hash(
         {
             "contract": "RiskOfBiasAssessmentReceipt",
-            "status": "assessed",
+            "status": "review_required" if issues else "assessed",
+            "issues": sorted(set(issues)),
             "assessments": assessments,
             "result_count": len(assessments),
             "study_level_average_used": False,
@@ -1065,6 +1460,8 @@ def assess_academic_synthesis_gate(request: object) -> dict[str, Any]:
     _version(data)
     results = []
     tuples = []
+    result_ids: set[str] = set()
+    blockers = []
     for index, raw in enumerate(require_list(data["results"], "request.results")):
         path = f"request.results[{index}]"
         item = require_mapping(raw, path)
@@ -1073,6 +1470,12 @@ def assess_academic_synthesis_gate(request: object) -> dict[str, Any]:
             {"result_id", "estimand", "estimate", "standard_error", "status"},
             path,
         )
+        result_id = require_string(item["result_id"], f"{path}.result_id")
+        if result_id in result_ids:
+            blockers.append("duplicate_synthesis_result")
+        result_ids.add(result_id)
+        if item["status"] != "active":
+            blockers.append("synthesis_result_not_active")
         estimand = require_mapping(item["estimand"], f"{path}.estimand")
         require_exact_keys(estimand, _ESTIMAND_FIELDS, f"{path}.estimand")
         normalized_estimand = {
@@ -1091,7 +1494,9 @@ def assess_academic_synthesis_gate(request: object) -> dict[str, Any]:
                 "status": require_string(item["status"], f"{path}.status"),
             }
         )
-    baseline = tuples[0]
+    if len(results) < 2:
+        blockers.append("insufficient_synthesis_results")
+    baseline = tuples[0] if tuples else {}
     incompatibilities = []
     for result, estimand in zip(results[1:], tuples[1:], strict=True):
         for field in sorted(_ESTIMAND_FIELDS):
@@ -1115,7 +1520,17 @@ def assess_academic_synthesis_gate(request: object) -> dict[str, Any]:
             "heterogeneity_reasons",
             "sensitivity_receipts",
             "missing_evidence_assessed",
-        },
+        }
+        | (
+            set(model)
+            & {
+                "required_sensitivity",
+                "sensitivity_results",
+                "conclusion_limitations",
+                "sensitivity_protocol_json",
+                "sensitivity_protocol_sha256",
+            }
+        ),
         "request.model",
     )
     heterogeneous = require_bool(model["heterogeneous"], "request.model.heterogeneous")
@@ -1144,7 +1559,6 @@ def assess_academic_synthesis_gate(request: object) -> dict[str, Any]:
     missing_assessed = require_bool(
         model["missing_evidence_assessed"], "request.model.missing_evidence_assessed"
     )
-    blockers = []
     if incompatibilities:
         blockers.append("estimand_incompatible")
     if heterogeneous and prediction_record is None:
@@ -1155,6 +1569,7 @@ def assess_academic_synthesis_gate(request: object) -> dict[str, Any]:
         blockers.append("sensitivity_missing")
     if not missing_assessed:
         blockers.append("missing_evidence_not_assessed")
+    blockers.extend(sensitivity_binding_issues(model, results))
     allowed = not blockers
     return with_receipt_hash(
         {
@@ -1172,8 +1587,13 @@ def assess_academic_synthesis_gate(request: object) -> dict[str, Any]:
                 "heterogeneity_reasons": reasons,
                 "sensitivity_receipts": sensitivities,
                 "missing_evidence_assessed": missing_assessed,
+                "required_sensitivity": model.get("required_sensitivity", []),
+                "sensitivity_protocol_json": model.get("sensitivity_protocol_json"),
+                "sensitivity_protocol_sha256": model.get("sensitivity_protocol_sha256"),
+                "sensitivity_results": model.get("sensitivity_results", []),
+                "conclusion_limitations": model.get("conclusion_limitations", []),
             },
-            "blockers": blockers,
+            "blockers": sorted(set(blockers)),
             "pooling_allowed": allowed,
             "i_squared_alone_sufficient": False,
         }

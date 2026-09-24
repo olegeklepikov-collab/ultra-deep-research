@@ -44,6 +44,92 @@ def _sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def select_draft_source(plan: dict, portfolio: dict, capture: dict) -> tuple[dict, dict]:
+    """Choose one receipted text candidate; retain every unreviewed plan leaf."""
+    if not all(verify_receipt_hash(value) for value in (plan, portfolio, capture)):
+        raise ValueError("source_selection_invalid")
+    rows, selected = capture.get("leaves"), portfolio.get("leaves")
+    if type(rows) is not list or type(selected) is not list:
+        raise ValueError("source_selection_invalid")
+    planned = [leaf["leaf_id"] for leaf in plan["leaves"]]
+    if len(rows) > 1 and plan["mode"] != "search":
+        raise ValueError("unprofiled_multi_source_capture")
+    by_leaf = {}
+    for row in rows:
+        if (
+            type(row) is not dict
+            or type(row.get("leaf_id")) is not str
+            or row["leaf_id"] not in planned
+            or row["leaf_id"] in by_leaf
+        ):
+            raise ValueError("source_selection_invalid")
+        by_leaf[row["leaf_id"]] = row
+    portfolio_by_leaf = {}
+    for item in selected:
+        if (
+            type(item) is not dict
+            or type(item.get("leaf_id")) is not str
+            or item["leaf_id"] not in planned
+            or item["leaf_id"] in portfolio_by_leaf
+        ):
+            raise ValueError("source_selection_invalid")
+        portfolio_by_leaf[item["leaf_id"]] = item
+    eligible = []
+    for leaf_id in planned:
+        row, item = by_leaf.get(leaf_id), portfolio_by_leaf.get(leaf_id)
+        if row is None or item is None:
+            continue
+        if row.get("status") == "extracted_candidate":
+            if not (
+                row.get("read_scope") == "extracted_text_only"
+                and item.get("status") == "candidate"
+                and item.get("read_scope") == "extracted_text_only"
+                and item.get("receipt_hash") == capture["receipt_hash"]
+                and type(row.get("source_id")) is str
+                and row.get("content_file") == f"{row['source_id']}.txt"
+            ):
+                raise ValueError("source_not_reviewable")
+            eligible.append(leaf_id)
+        elif item.get("status") == "candidate" and item.get("receipt_hash") == capture["receipt_hash"]:
+            raise ValueError("source_selection_invalid")
+    if (
+        capture.get("successful_sources") != len(eligible)
+        or not eligible
+        or len({by_leaf[leaf_id]["source_id"] for leaf_id in eligible}) != len(eligible)
+    ):
+        raise ValueError("source_selection_invalid")
+    if plan["mode"] == "search":
+        if (
+            set(by_leaf) != set(planned)
+            or set(portfolio_by_leaf) != set(planned)
+            or portfolio.get("candidate_leaf_ids") != eligible
+            or portfolio.get("missing_or_failed_leaf_ids") != sorted(set(planned) - set(eligible))
+            or capture.get("selected_leaf_id") is not None
+        ):
+            raise ValueError("source_selection_invalid")
+    elif capture.get("selected_leaf_id") != eligible[0]:
+        raise ValueError("source_selection_invalid")
+    chosen = by_leaf[eligible[0]]
+    receipt = with_receipt_hash({
+        "schema_version": 1,
+        "contract": "BetaDraftSourceSelection",
+        "run_id": plan["run_id"],
+        "plan_receipt_hash": plan["receipt_hash"],
+        "portfolio_receipt_hash": portfolio["receipt_hash"],
+        "capture_receipt_hash": capture["receipt_hash"],
+        "selection_rule": "first_eligible_in_plan_order",
+        "selected_leaf_id": eligible[0],
+        "selected_source_id": chosen["source_id"],
+        "eligible_leaf_ids": eligible,
+        "unreviewed_candidate_leaf_ids": eligible[1:],
+        "missing_or_failed_leaf_ids": sorted(set(planned) - set(eligible)),
+        "read_scope": "one_extracted_candidate_only",
+        "full_plan_coverage_verified": False,
+        "release_authorized": False,
+    })
+    return chosen, receipt
+
+
 def _preflight(
     plan_file: Path, portfolio_file: Path, capture_file: Path
 ) -> tuple[dict, dict, dict, str, str, str, str]:
@@ -75,29 +161,16 @@ def _preflight(
         or capture.get("release_authorized") is not False
     ):
         raise ValueError("source_receipts_not_bound")
-    rows = capture.get("leaves")
-    if type(rows) is not list or len(rows) != 1 or type(rows[0]) is not dict:
-        raise ValueError("single_text_source_required")
-    row = rows[0]
+    row, _selection = select_draft_source(plan, portfolio, capture)
     leaf_id, source_id, content_file = (
         row.get("leaf_id"),
         row.get("source_id"),
         row.get("content_file"),
     )
-    selected = portfolio.get("leaves")
     if (
         type(leaf_id) is not str
         or type(source_id) is not str
         or content_file != f"{source_id}.txt"
-        or type(selected) is not list
-        or not any(
-            type(item) is dict
-            and item.get("leaf_id") == leaf_id
-            and item.get("status") == "candidate"
-            and item.get("receipt_hash") == capture.get("receipt_hash")
-            and item.get("read_scope") == "extracted_text_only"
-            for item in selected
-        )
         or row.get("status") != "extracted_candidate"
         or row.get("read_scope") != "extracted_text_only"
     ):
@@ -145,7 +218,9 @@ def finalize_beta_model(
         > plan["limits"]["max_estimated_cost_usd"]
     ):
         raise ValueError("cumulative_cost_limit_exceeded")
-    source_row = capture["leaves"][0]
+    source_row, selection = select_draft_source(plan, portfolio, capture)
+    if source_row["source_id"] != source_id:
+        raise ValueError("source_selection_invalid")
     direct = candidate["status"] == "verification_required"
     claims = (
         [
@@ -179,6 +254,13 @@ def finalize_beta_model(
                 else "Тезис требует следующей автоматической смысловой проверки.",
                 candidate["uncertainty"],
                 "Извлечённый текст не удостоверяет исходные сетевые байты страницы.",
+                "Черновик рассматривает только один выбранный источник; непроверенные листья: "
+                + ", ".join(
+                    selection["unreviewed_candidate_leaf_ids"]
+                    + selection["missing_or_failed_leaf_ids"]
+                )
+                if selection["unreviewed_candidate_leaf_ids"] or selection["missing_or_failed_leaf_ids"]
+                else "Черновик рассматривает только один выбранный источник; полный охват плана не установлен.",
             ]
             + (
                 [
@@ -210,10 +292,16 @@ def finalize_beta_model(
         json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     ).encode()
     write_exclusive_bytes(output / "model-report.json", report_bytes)
+    write_exclusive_json(output / "source-selection.json", selection)
     body = dict(candidate)
     body.pop("receipt_hash")
     body["report_sha256"] = _sha(report_bytes)
     body["portfolio_receipt_hash"] = portfolio["receipt_hash"]
+    body["source_selection_receipt_hash"] = selection["receipt_hash"]
+    body["selected_leaf_id"] = selection["selected_leaf_id"]
+    body["unreviewed_candidate_leaf_ids"] = selection["unreviewed_candidate_leaf_ids"]
+    body["missing_or_failed_leaf_ids"] = selection["missing_or_failed_leaf_ids"]
+    body["full_plan_coverage_verified"] = False
     candidate = with_receipt_hash(body)
     write_exclusive_json(output / "model-candidate.json", candidate)
     fsync_directory(output)
@@ -235,6 +323,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.output.name != f"{plan['run_id']}-model":
             raise ValueError("output_run_id_mismatch")
+        _row, selection = select_draft_source(plan, portfolio, capture)
         raw, usage, trace = run_tool_free_model(
             plan=plan,
             prompt=prompt,
@@ -244,6 +333,8 @@ def main(argv: list[str] | None = None) -> int:
                 "portfolio_receipt_hash": portfolio["receipt_hash"],
                 "source_receipt_hash": capture["receipt_hash"],
                 "source_id": source_id,
+                "selected_leaf_id": selection["selected_leaf_id"],
+                "source_selection_receipt_hash": selection["receipt_hash"],
             },
         )
         output_created = True

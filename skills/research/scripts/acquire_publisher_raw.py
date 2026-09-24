@@ -41,6 +41,7 @@ from hermes_research_report.academic_publisher_raw import (
 )
 from hermes_research_report.beta_acquisition import AcquisitionError
 from hermes_research_report.errors import ContractError
+from hermes_research_report.runtime_snapshot import runtime_guarded
 
 
 class AcquisitionDeadline(BaseException):
@@ -77,9 +78,11 @@ def _public_ipv4(host: str) -> str:
 
 
 def _fetch_one(
-    url: str, maximum: int, publisher_host: str
+    url: str, maximum: int, publisher_host: str, *, max_query_chars: int = 500
 ) -> tuple[int, dict[str, str], bytes, str, bool]:
-    host, target, _safe = _validated_url(url, publisher_host)
+    host, target, _safe = _validated_url(
+        url, publisher_host, max_query_chars=max_query_chars
+    )
     ip = _public_ipv4(host)
     connection = _PinnedHTTPSConnection(host, ip, timeout=12.0)
     try:
@@ -106,6 +109,7 @@ def _fetch_one(
         connection.close()
 
 
+@runtime_guarded
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)

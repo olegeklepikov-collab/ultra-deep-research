@@ -33,6 +33,7 @@ except ImportError:
 from hermes_research_report.beta_modes import verify_beta_mode_plan
 from hermes_research_report.canonical import verify_receipt_hash, with_receipt_hash
 from hermes_research_report.errors import ContractError
+from hermes_research_report.runtime_snapshot import runtime_guarded, verify_runtime
 
 SCRIPTS = Path(__file__).resolve().parent
 _CODE = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
@@ -43,6 +44,7 @@ class SearchRunError(ValueError):
 
 
 def _child(command: list[str], *, timeout: float) -> tuple[int, dict[str, Any]]:
+    verify_runtime()
     if timeout <= 0:
         raise SearchRunError("search_wall_limit_exhausted")
     try:
@@ -105,6 +107,12 @@ def _finish(
         {
             "schema_version": 1,
             "contract": "BetaAutonomousSearchRun",
+            "execution_contract": {
+                "kind": "standalone_local_research",
+                "beads_work_executed": False,
+                "dolt_commit_executed": False,
+                "external_delivery_executed": False,
+            },
             "run_id": run_id,
             "status": status,
             "reason_code": reason,
@@ -131,6 +139,7 @@ def _finish(
     return receipt
 
 
+@runtime_guarded
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--question", required=True)

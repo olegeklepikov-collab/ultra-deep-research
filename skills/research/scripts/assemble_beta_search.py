@@ -12,7 +12,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "src"))
 
 try:
-    from .draft_beta_model import _preflight
+    from .draft_beta_model import _preflight, select_draft_source
     from .file_io import (
         fsync_directory,
         load_json,
@@ -21,7 +21,7 @@ try:
         write_exclusive_json,
     )
 except ImportError:
-    from draft_beta_model import _preflight
+    from draft_beta_model import _preflight, select_draft_source
     from file_io import (
         fsync_directory,
         load_json,
@@ -32,7 +32,7 @@ except ImportError:
 
 from hermes_research_report.canonical import verify_receipt_hash, with_receipt_hash
 from hermes_research_report.errors import ContractError
-from hermes_research_report.report import ReportInputError, build_report
+from hermes_research_report.report import ReportInputError, _md, build_report
 
 
 def assemble_search_result(
@@ -46,6 +46,32 @@ def assemble_search_result(
 ) -> dict:
     if plan["mode"] != "search":
         raise ValueError("search_only_result")
+    row, selection = select_draft_source(plan, portfolio, capture)
+    if (
+        candidate.get("source_id") != row["source_id"]
+        or (
+            candidate.get("source_selection_receipt_hash") != selection["receipt_hash"]
+            if len(capture["leaves"]) > 1
+            else candidate.get("source_selection_receipt_hash")
+            not in (None, selection["receipt_hash"])
+        )
+    ):
+        raise ValueError("search_source_selection_not_bound")
+    scope_parts = ["Один источник выбран для черновика."]
+    if selection["unreviewed_candidate_leaf_ids"]:
+        scope_parts.append(
+            "Другие пригодные листья не проверены: "
+            + ", ".join(selection["unreviewed_candidate_leaf_ids"])
+            + "."
+        )
+    if selection["missing_or_failed_leaf_ids"]:
+        scope_parts.append(
+            "Непокрытые или отклонённые листья: "
+            + ", ".join(selection["missing_or_failed_leaf_ids"])
+            + "."
+        )
+    scope_parts.append("Полный охват плана не установлен.")
+    scope_limit = " ".join(scope_parts)
     model_scope_limit = (
         f"Модель прочитала только фрагмент "
         f"{candidate['model_view_char_start']}:{candidate['model_view_char_end']} "
@@ -60,7 +86,7 @@ def assemble_search_result(
             or not verify_receipt_hash(candidate)
             or candidate.get("plan_receipt_hash") != plan["receipt_hash"]
             or candidate.get("portfolio_receipt_hash") != portfolio["receipt_hash"]
-            or candidate.get("source_id") != capture["leaves"][0].get("source_id")
+            or candidate.get("source_id") != row.get("source_id")
             or candidate.get("source_text_sha256")
             != hashlib.sha256(source_text.encode()).hexdigest()
             or candidate.get("source_relation") not in {"context_only", "irrelevant"}
@@ -69,7 +95,6 @@ def assemble_search_result(
             or candidate.get("release_authorized") is not False
         ):
             raise ValueError("search_negative_result_not_bound")
-        row = capture["leaves"][0]
         total_cost = (
             portfolio["reported_provider_cost_usd"] + candidate["estimated_cost_usd"]
         )
@@ -91,6 +116,7 @@ def assemble_search_result(
                 "limitations": [
                     candidate["uncertainty"],
                     "Источник не даёт прямого ответа; содержательный тезис не выдан.",
+                    scope_limit,
                 ]
                 + ([model_scope_limit] if model_scope_limit else []),
                 "stop_reason": "insufficient_evidence",
@@ -112,6 +138,7 @@ def assemble_search_result(
                 "plan_receipt_hash": plan["receipt_hash"],
                 "portfolio_receipt_hash": portfolio["receipt_hash"],
                 "candidate_receipt_hash": candidate["receipt_hash"],
+                "source_selection_receipt_hash": selection["receipt_hash"],
                 "semantic_check_receipt_hash": None,
                 "source_text_sha256": candidate["source_text_sha256"],
                 "markdown_sha256": hashlib.sha256(
@@ -149,7 +176,6 @@ def assemble_search_result(
         not in {"supported", "overstated", "contradicted", "unclear"}
     ):
         raise ValueError("search_result_receipts_not_bound")
-    row = capture["leaves"][0]
     quote_start = candidate.get("quote_char_start")
     quote_end = candidate.get("quote_char_end")
     quote = candidate.get("quote")
@@ -217,8 +243,9 @@ def assemble_search_result(
             "limitations": [
                 "Проверка смысла выполнена отдельным сеансом той же модели; это предварительная поддержка, не независимая опора."
                 if support
-                else "Автоматическая проверка не подтвердила тезис; содержательный ответ не выдан.",
+                else "Автоматическая проверка не подтвердила тезис; он сохранён отдельно и не считается установленным выводом.",
                 "Исходные байты страницы и независимость происхождения не удостоверены.",
+                scope_limit,
             ]
             + ([model_scope_limit] if model_scope_limit else []),
             "stop_reason": "checkpoint" if support else "insufficient_evidence",
@@ -233,6 +260,38 @@ def assemble_search_result(
         or type(report.get("markdown")) is not str
     ):
         raise ValueError("search_report_not_provisional")
+    if not support:
+        report["unaccepted_interpretations"] = [
+            {
+                "text": candidate["claim"],
+                "source_id": row["source_id"],
+                "quote": candidate["quote"],
+                "verdict": semantic_check["verdict"],
+                "rationale": semantic_check.get("rationale"),
+                "accepted": False,
+            }
+        ]
+        report["markdown"] = report["markdown"].replace(
+            "Тезисы не переданы; содержательный ответ отсутствует.",
+            "Подтвержденных тезисов нет; непроверенная интерпретация сохранена ниже.",
+        )
+        report["markdown"] += (
+            "\n## Неподтвержденная интерпретация\n\n"
+            + _md(candidate["claim"])
+            + "\n\nСтатус проверки: "
+            + {
+                "overstated": "формулировка сильнее доказательств",
+                "contradicted": "тезис противоречит материалу",
+                "unclear": "смысловая опора не установлена",
+            }[semantic_check["verdict"]]
+            + ". Основание: "
+            + _md(semantic_check.get("rationale", "не установлено"))
+            + "\n\nФрагмент источника: «"
+            + _md(candidate["quote"])
+            + "».\n\n"
+            + "Точное совпадение цитаты не подтверждает интерпретацию. "
+            "Это сохраненное предположение, а не принятый вывод.\n"
+        )
     markdown_bytes = report["markdown"].encode("utf-8")
     return with_receipt_hash(
         {
@@ -243,10 +302,12 @@ def assemble_search_result(
             "plan_receipt_hash": plan["receipt_hash"],
             "portfolio_receipt_hash": portfolio["receipt_hash"],
             "candidate_receipt_hash": candidate["receipt_hash"],
+            "source_selection_receipt_hash": selection["receipt_hash"],
             "semantic_check_receipt_hash": semantic_check["receipt_hash"],
             "source_text_sha256": candidate["source_text_sha256"],
             "markdown_sha256": hashlib.sha256(markdown_bytes).hexdigest(),
             "claim_count": len(claims),
+            "visible_unaccepted_interpretation_count": int(not support),
             "reported_total_cost_usd": total_cost,
             "report": report,
             "final_acceptance_external": True,

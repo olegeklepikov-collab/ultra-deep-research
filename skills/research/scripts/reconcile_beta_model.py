@@ -12,7 +12,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT / "src"))
 
 try:
-    from .draft_beta_model import MODEL, PROVIDER, _preflight, finalize_beta_model
+    from .draft_beta_model import MODEL, PROVIDER, _preflight, finalize_beta_model, select_draft_source
     from .file_io import (
         fsync_directory,
         load_json,
@@ -20,7 +20,7 @@ try:
         write_exclusive_json,
     )
 except ImportError:
-    from draft_beta_model import MODEL, PROVIDER, _preflight, finalize_beta_model
+    from draft_beta_model import MODEL, PROVIDER, _preflight, finalize_beta_model, select_draft_source
     from file_io import (
         fsync_directory,
         load_json,
@@ -57,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         if type(attempt_value) is not dict:
             raise ValueError("model_attempt_invalid")
         attempt = attempt_value
+        _row, selection = select_draft_source(plan, portfolio, capture)
         historical_prompt = prompt.replace("5–40 слов", "5–20 слов")
         prompt_used = (
             historical_prompt
@@ -71,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
             or attempt.get("portfolio_receipt_hash") != portfolio["receipt_hash"]
             or attempt.get("source_receipt_hash") != capture["receipt_hash"]
             or attempt.get("source_id") != source_id
+            or attempt.get("selected_leaf_id") not in (None, selection["selected_leaf_id"])
+            or attempt.get("source_selection_receipt_hash") not in (None, selection["receipt_hash"])
+            or (len(capture["leaves"]) > 1 and attempt.get("source_selection_receipt_hash") != selection["receipt_hash"])
             or attempt.get("prompt_sha256")
             != hashlib.sha256(prompt_used.encode("utf-8")).hexdigest()
             or attempt.get("provider") != PROVIDER

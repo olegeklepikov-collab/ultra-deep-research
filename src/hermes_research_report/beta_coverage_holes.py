@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from .beta_coverage import assess_beta_coverage
@@ -71,7 +72,7 @@ def build_hole_prompt(frame: object, decomposition: object) -> str:
 def fill_coverage_holes(
     raw: str, *, frame: object, decomposition: object
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    frame, decomposition, before = _inputs(frame, decomposition)
+    frame, decomposition, _ = _inputs(frame, decomposition)
     build_hole_prompt(frame, decomposition)
     if type(raw) is not str or not raw or len(raw.encode()) > 1_048_576:
         raise ValueError("coverage_holes_response_invalid")
@@ -107,6 +108,10 @@ def fill_coverage_holes(
     seen = {atom["question"].strip().casefold() for atom in frame["atoms"]}
     additions = []
     normalized_spaces = []
+    route_ambiguities = []
+    unplaced_additions = []
+    new_branches = []
+    new_facets = {}
     for index, row in enumerate(value["additions"]):
         if type(row) is not dict or set(row) != {
             "branch_id",
@@ -121,6 +126,20 @@ def fill_coverage_holes(
         question = row["question"]
         closure = row["closure_criterion"]
         space = row["space"]
+        if type(space) is str and space not in {
+            "positive",
+            "negative",
+            "latent",
+            "narrow-edge",
+        }:
+            unplaced_additions.append(
+                {
+                    "addition_index": index,
+                    "proposal": row,
+                    "reason": "unresolved_space_classification",
+                }
+            )
+            continue
         if space == "narrow-edge":
             space = "negative"
             normalized_spaces.append(
@@ -132,7 +151,13 @@ def fill_coverage_holes(
                 }
             )
         if (
-            branch is None
+            (
+                branch is None
+                and (
+                    type(branch_id) is not str
+                    or not re.fullmatch(r"BRANCH-[0-9]{3,6}", branch_id)
+                )
+            )
             or type(question) is not str
             or not 10 <= len(question.strip()) <= 500
             or question.strip().casefold() in seen
@@ -144,9 +169,34 @@ def fill_coverage_holes(
             or space not in {"positive", "negative", "latent"}
         ):
             raise ValueError("coverage_holes_atom_invalid")
+        if branch is None:
+            facet_id = f"FACET-HOLE-{next_id + index:03d}"
+            if facet_id in frame["facets"]:
+                raise ValueError("coverage_holes_facet_collision")
+            branch = {
+                "branch_id": branch_id,
+                "facet_id": facet_id,
+                "question": question.strip(),
+            }
+            branches[branch_id] = branch
+            new_branches.append(branch)
+            new_facets[facet_id] = question.strip()
+            # Discovery is allowed, but no arbitrary parent aspect or evidence
+            # family is inferred for a newly proposed direction.
+            by_facet[facet_id] = {("web",)}
         families = by_facet.get(branch["facet_id"], set())
-        if len(families) != 1:
+        if not families:
             raise ValueError("coverage_holes_facet_route_ambiguous")
+        inherited_families = sorted({family for route in families for family in route})
+        if len(families) > 1:
+            route_ambiguities.append(
+                {
+                    "addition_index": index,
+                    "facet_id": branch["facet_id"],
+                    "observed_routes": [list(route) for route in sorted(families)],
+                    "effective_rule": "conservative_union_pending_route_review",
+                }
+            )
         importance = row["importance"]
         additions.append(
             {
@@ -157,23 +207,33 @@ def fill_coverage_holes(
                 "closure_criterion": closure.strip(),
                 "importance": importance,
                 "space": space,
-                "required_families": list(next(iter(families))),
+                "required_families": inherited_families,
                 "required_polarities": ["neutral"],
                 "required_independent_origins": 2 if importance == "central" else 1,
             }
         )
         seen.add(question.strip().casefold())
     body = {key: val for key, val in frame.items() if key != "receipt_hash"}
+    body["branches"] = [*frame["branches"], *new_branches]
+    body["facets"] = [*frame["facets"], *new_facets]
+    body["facet_labels"] = {
+        **frame["facet_labels"],
+        **{
+            key: "Неклассифицированное направление: " + value[:80]
+            for key, value in new_facets.items()
+        },
+    }
+    body["facet_definitions"] = {**frame["facet_definitions"], **new_facets}
     body["atoms"] = [*frame["atoms"], *additions]
     revised = with_receipt_hash(body)
     after = assess_beta_coverage(revised, [], budget_exhausted=False)
-    if (
-        set(before["empty_branch_ids"]) & set(after["empty_branch_ids"])
-        or set(before["required_importance_rank_gaps"])
-        & set(after["required_importance_rank_gaps"])
-        or set(before["required_space_gaps"]) & set(after["required_space_gaps"])
-    ):
-        raise ValueError("coverage_holes_unfilled")
+    # A useful partial extension is still useful. Unresolved gaps are reported,
+    # not a reason to discard already validated additions or repeat paid calls.
+    holes_remaining = bool(
+        after["empty_branch_ids"]
+        or after["required_importance_rank_gaps"]
+        or after["required_space_gaps"]
+    )
     receipt = with_receipt_hash(
         {
             "schema_version": 1,
@@ -185,9 +245,15 @@ def fill_coverage_holes(
             "raw_response_sha256": hashlib.sha256(raw.encode()).hexdigest(),
             "added_atom_ids": [atom["atom_id"] for atom in additions],
             "normalized_model_spaces": normalized_spaces,
+            "route_ambiguities": route_ambiguities,
+            "unplaced_additions": unplaced_additions,
+            "created_unmapped_branch_ids": [row["branch_id"] for row in new_branches],
+            "domain_reconciliation_required": bool(new_branches),
             "remaining_empty_branch_ids": after["empty_branch_ids"],
             "remaining_importance_rank_gaps": after["required_importance_rank_gaps"],
             "remaining_space_gaps": after["required_space_gaps"],
+            "structural_repair_complete": not holes_remaining,
+            "status": "partial" if holes_remaining else "structural_gaps_filled",
             "semantic_atomicity_verified": False,
             "source_calls": 0,
             "release_authorized": False,

@@ -20,12 +20,17 @@ except ImportError:
     from file_io import load_json, write_exclusive_json
     from model_call import ModelCallError, run_tool_free_model
 
+from hermes_research_report.beta_coverage import assess_beta_coverage
+from hermes_research_report.beta_coverage_holes import (
+    build_hole_prompt,
+    fill_coverage_holes,
+)
 from hermes_research_report.beta_coverage_planner import (
     build_coverage_prompt,
     parse_coverage_proposal,
 )
 from hermes_research_report.beta_modes import validate_public_question
-from hermes_research_report.canonical import with_receipt_hash
+from hermes_research_report.canonical import verify_receipt_hash, with_receipt_hash
 from hermes_research_report.errors import ContractError
 
 
@@ -40,6 +45,8 @@ def persist_coverage_result(
     trace: dict,
     decomposition: object | None = None,
     reconciled: bool = False,
+    repair: tuple[dict, dict, dict] | None = None,
+    repair_failure: dict | None = None,
 ) -> tuple[dict, dict]:
     frame, proposal = parse_coverage_proposal(
         raw,
@@ -48,6 +55,21 @@ def persist_coverage_result(
         run_id=run_id,
         decomposition=decomposition,
     )
+    repair_cost = 0.0
+    if repair is not None:
+        repaired, repair_receipt, repair_usage = repair
+        if (
+            not verify_receipt_hash(repaired)
+            or not verify_receipt_hash(repair_receipt)
+            or repair_receipt.get("parent_frame_receipt_hash") != frame["receipt_hash"]
+            or repair_receipt.get("revised_frame_receipt_hash")
+            != repaired["receipt_hash"]
+        ):
+            raise ValueError("coverage_repair_parent_mismatch")
+        write_exclusive_json(output / "initial-frame.json", frame)
+        write_exclusive_json(output / "hole-repair.json", repair_receipt)
+        frame = repaired
+        repair_cost = float(repair_usage["estimated_cost_usd"])
     receipt = with_receipt_hash(
         {
             "schema_version": 1,
@@ -58,11 +80,23 @@ def persist_coverage_result(
             "frame_receipt_hash": frame["receipt_hash"],
             "proposal_receipt_hash": proposal["receipt_hash"],
             "decomposition_receipt_hash": frame.get("decomposition_receipt_hash"),
-            "reported_model_cost_usd": usage["estimated_cost_usd"],
+            "reported_model_cost_usd": (
+                None
+                if repair_failure and repair_failure["observed_cost_usd"] is None
+                else usage["estimated_cost_usd"]
+                + repair_cost
+                + (repair_failure["observed_cost_usd"] if repair_failure else 0)
+            ),
+            "hole_repair_failure": repair_failure,
+            "hole_repair_receipt_hash": repair[1]["receipt_hash"] if repair else None,
+            "initial_frame_receipt_hash": proposal["frame_receipt_hash"],
             "model_session_id": usage["session_id"],
             "model_trace_message_count": len(trace["messages"]),
             "reconciled_without_new_model_call": reconciled,
-            "additional_model_calls": 0,
+            "additional_model_calls": 0
+            if reconciled
+            else int(repair is not None or repair_failure is not None),
+            "repair_model_session_id": repair[2]["session_id"] if repair else None,
             "independent_review_status": "not_performed",
             "source_calls": 0,
             "release_authorized": False,
@@ -136,6 +170,66 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
         model_completed = True
+        repair = None
+        repair_failure = None
+        preview, _ = parse_coverage_proposal(
+            raw,
+            question=question,
+            profile=args.profile,
+            run_id=run_id,
+            decomposition=decomposition,
+        )
+        progress = assess_beta_coverage(preview, [], budget_exhausted=False)
+        if decomposition is not None and any(
+            progress[key]
+            for key in (
+                "empty_branch_ids",
+                "required_importance_rank_gaps",
+                "required_space_gaps",
+            )
+        ):
+            # Preserve the first paid response and record the additional stage separately.
+            repair_usage = None
+            try:
+                repair_raw, repair_usage, _repair_trace = run_tool_free_model(
+                    bootstrap_budget={
+                        "schema_version": 1,
+                        "run_id": run_id + "-HF",
+                        "wall_seconds": 120,
+                        "max_estimated_cost_usd": 0.01,
+                        "model_calls": 1,
+                    },
+                    prompt=build_hole_prompt(preview, decomposition),
+                    hermes=args.hermes,
+                    output=output / "hole-repair",
+                    attempt_binding={
+                        "purpose": "coverage_structural_hole_fill",
+                        "parent_frame_receipt_hash": preview["receipt_hash"],
+                    },
+                    preserve_completed_cost_overrun=True,
+                )
+                repaired, repair_receipt = fill_coverage_holes(
+                    repair_raw,
+                    frame=preview,
+                    decomposition=decomposition,
+                )
+                repair = (repaired, repair_receipt, repair_usage)
+            except (
+                ContractError,
+                ModelCallError,
+                OSError,
+                ValueError,
+                KeyError,
+            ) as error:
+                repair_failure = {
+                    "status": "unresolved",
+                    "error_type": type(error).__name__,
+                    "observed_cost_usd": repair_usage["estimated_cost_usd"]
+                    if repair_usage
+                    else None,
+                    "initial_frame_preserved": True,
+                    "retry_allowed": False,
+                }
         frame, _receipt = persist_coverage_result(
             output=output,
             run_id=run_id,
@@ -145,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
             usage=usage,
             trace=trace,
             decomposition=decomposition,
+            repair=repair,
+            repair_failure=repair_failure,
         )
         print(
             json.dumps(
@@ -154,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
                     "output": str(output),
                     "facet_count": len(frame["facets"]),
                     "atom_count": len(frame["atoms"]),
-                    "model_cost_usd": usage["estimated_cost_usd"],
+                    "model_cost_usd": _receipt["reported_model_cost_usd"],
                     "source_calls": 0,
                     "release_authorized": False,
                 },

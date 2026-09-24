@@ -121,12 +121,14 @@ from .provider_contracts import (
     reconcile_provider_lifecycle,
     reserve_provider_budget,
 )
+from .provider_live import probe_provider_live
 from .qualification import (
     assess_deployment_candidate,
     assess_utility,
     compare_depths,
     evaluate_profile_qualification,
 )
+from .r3_evidence import assess_r3_evidence_field
 from .report import build_report
 from .review_release import (
     assess_acceptance,
@@ -136,6 +138,12 @@ from .review_release import (
 )
 from .routing import assess_route
 from .run_contract import create_run_contract, propose_run_contract_revision
+from .runtime_contracts import (
+    assemble_context_package,
+    assess_capability_model_lane,
+    assess_distribution_delivery,
+    reconcile_work_liveness,
+)
 from .scholarly import assess_capability_gap, resolve_scholarly_object
 from .search_ledger import assess_search_ledger
 from .search_workflow import (
@@ -153,6 +161,7 @@ from .udr import assess_udr_plan, project_quality_dashboard, select_udr_architec
 __all__ = [
     "accept_greenfield",
     "adjudicate_screening",
+    "assemble_context_package",
     "assess_academic_protocol",
     "assess_academic_synthesis_gate",
     "assess_acceptance",
@@ -164,6 +173,7 @@ __all__ = [
     "assess_bundle_import",
     "assess_business_design",
     "assess_capability_gap",
+    "assess_capability_model_lane",
     "assess_certainty",
     "assess_circuit",
     "assess_claim_card",
@@ -179,6 +189,7 @@ __all__ = [
     "assess_deep_qualification",
     "assess_delta",
     "assess_deployment_candidate",
+    "assess_distribution_delivery",
     "assess_dolt_commit",
     "assess_evidence_exception",
     "assess_extraction",
@@ -205,6 +216,7 @@ __all__ = [
     "assess_provider_conformance",
     "assess_provider_fallback",
     "assess_provider_operation",
+    "assess_r3_evidence_field",
     "assess_recovery",
     "assess_release",
     "assess_replay",
@@ -252,6 +264,7 @@ __all__ = [
     "materialize_corpus",
     "normalize_provider_receipt",
     "operationalize_construct",
+    "probe_provider_live",
     "project_quality_dashboard",
     "promote_fragment",
     "propose_construct_revision",
@@ -263,6 +276,7 @@ __all__ = [
     "reconcile_operation",
     "reconcile_provider_lifecycle",
     "reconcile_state",
+    "reconcile_work_liveness",
     "record_parse_runs",
     "record_search_environment",
     "reserve_provider_budget",

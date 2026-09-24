@@ -14,12 +14,22 @@ try:
         assess_academic_protocol,
         assess_meta_analysis,
     )
+    from .src.hermes_research_report.academic_integrity import (
+        ACADEMIC_INTEGRITY_ASSESS_SCHEMA,
+        assess_academic_integrity,
+    )
+    from .src.hermes_research_report.acquisition_integrity import (
+        ACQUISITION_INTEGRITY_SCHEMA,
+        assess_acquisition_integrity,
+    )
     from .src.hermes_research_report.advanced_academic import (
         ACADEMIC_SYNTHESIS_GATE_SCHEMA,
         CERTAINTY_ASSESS_SCHEMA,
         COMPUTATION_REPLAY_ASSESS_SCHEMA,
         EXTRACTION_ASSESS_SCHEMA,
+        FIXED_EFFECT_COMPUTE_SCHEMA,
         PRISMA_ASSESS_SCHEMA,
+        PRISMA_FLOW_ACCOUNT_SCHEMA,
         REVIEW_PROTOCOL_VALIDATE_SCHEMA,
         RISK_OF_BIAS_ASSESS_SCHEMA,
         SCREENING_ADJUDICATE_SCHEMA,
@@ -30,7 +40,9 @@ try:
         assess_computation_replay,
         assess_extraction,
         assess_prisma,
+        assess_prisma_flow_accounting,
         assess_risk_of_bias,
+        compute_fixed_effect_estimate,
         resolve_study_graph,
         validate_review_protocol,
     )
@@ -62,7 +74,15 @@ try:
         BUSINESS_DESIGN_ASSESS_SCHEMA,
         assess_business_design,
     )
+    from .src.hermes_research_report.business_controls import (
+        BUSINESS_CONTROL_ASSESS_SCHEMA,
+        assess_business_control,
+    )
     from .src.hermes_research_report.circuit import assess_circuit
+    from .src.hermes_research_report.claim_verification import (
+        CLAIM_VERIFICATION_GRAPH_SCHEMA,
+        assess_claim_verification_graph,
+    )
     from .src.hermes_research_report.claims import (
         CHALLENGE_EVALUATE_SCHEMA,
         CLAIM_EVALUATE_SCHEMA,
@@ -94,6 +114,14 @@ try:
         CORPUS_MATERIALIZE_SCHEMA,
         materialize_corpus,
     )
+    from .src.hermes_research_report.coverage_details import (
+        SEARCH_COVERAGE_DETAILS_SCHEMA,
+        assess_search_coverage_details,
+    )
+    from .src.hermes_research_report.coverage_status import (
+        COVERAGE_STATUS_ASSESS_SCHEMA,
+        assess_coverage_status,
+    )
     from .src.hermes_research_report.decisions import (
         DECISION_ENVELOPE_ASSESS_SCHEMA,
         DELTA_ASSESS_SCHEMA,
@@ -121,6 +149,12 @@ try:
         assess_multiagent_independence,
         assess_obligation_preservation,
         assess_resilience_recovery,
+    )
+    from .src.hermes_research_report.deployment import (
+        MIGRATION_MAP_SCHEMA,
+        RESOURCE_ADMISSION_SCHEMA,
+        assess_resource_admission,
+        dry_run_migration_map,
     )
     from .src.hermes_research_report.document_graph import (
         DOCUMENT_GRAPH_BUILD_SCHEMA,
@@ -205,6 +239,10 @@ try:
         NARRATIVE_PLAN_ASSESS_SCHEMA,
         assess_narrative_plan,
     )
+    from .src.hermes_research_report.numeric_reproduction import (
+        NUMERIC_REPRODUCTION_SCHEMA,
+        assess_numeric_reproduction,
+    )
     from .src.hermes_research_report.orchestration import (
         WORK_PLAN_BUILD_SCHEMA,
         build_work_plan,
@@ -247,6 +285,14 @@ try:
         reconcile_provider_lifecycle,
         reserve_provider_budget,
     )
+    from .src.hermes_research_report.provider_execution import (
+        PROVIDER_EXECUTION_ASSESS_SCHEMA,
+        assess_provider_execution,
+    )
+    from .src.hermes_research_report.provider_live import (
+        PROVIDER_LIVE_PROBE_SCHEMA,
+        probe_provider_live,
+    )
     from .src.hermes_research_report.qualification import (
         DEPLOYMENT_CANDIDATE_SCHEMA,
         DEPTH_COMPARISON_SCHEMA,
@@ -256,6 +302,10 @@ try:
         assess_utility,
         compare_depths,
         evaluate_profile_qualification,
+    )
+    from .src.hermes_research_report.r3_evidence import (
+        R3_EVIDENCE_SCHEMA,
+        assess_r3_evidence_field,
     )
     from .src.hermes_research_report.report import (
         REPORT_TOOL_SCHEMA,
@@ -279,6 +329,16 @@ try:
         create_run_contract,
         propose_run_contract_revision,
     )
+    from .src.hermes_research_report.runtime_contracts import (
+        CAPABILITY_MODEL_SCHEMA,
+        CONTEXT_ASSEMBLY_SCHEMA,
+        DISTRIBUTION_DELIVERY_SCHEMA,
+        LIVENESS_RECONCILE_SCHEMA,
+        assemble_context_package,
+        assess_capability_model_lane,
+        assess_distribution_delivery,
+        reconcile_work_liveness,
+    )
     from .src.hermes_research_report.schemas import (
         ARTIFACT_ASSESS_SCHEMA,
         CIRCUIT_ASSESS_SCHEMA,
@@ -297,6 +357,10 @@ try:
         assess_capability_gap,
         resolve_scholarly_object,
     )
+    from .src.hermes_research_report.search_execution import (
+        SEARCH_EXECUTION_TRACE_SCHEMA,
+        assess_search_execution_trace,
+    )
     from .src.hermes_research_report.search_ledger import (
         SEARCH_LEDGER_ASSESS_SCHEMA,
         assess_search_ledger,
@@ -313,6 +377,10 @@ try:
         compile_query_ast,
         record_search_environment,
     )
+    from .src.hermes_research_report.security_controls import (
+        SECURITY_CONTROL_ASSESS_SCHEMA,
+        assess_security_control,
+    )
     from .src.hermes_research_report.source_families import (
         SEARCH_COVERAGE_ASSESS_SCHEMA,
         SOURCE_POOL_AUDIT_SCHEMA,
@@ -326,6 +394,10 @@ try:
         verify_fragment,
     )
     from .src.hermes_research_report.state import reconcile_state
+    from .src.hermes_research_report.state_semantics import (
+        STATE_SEMANTICS_ASSESS_SCHEMA,
+        assess_state_semantics,
+    )
     from .src.hermes_research_report.udr import (
         QUALITY_DASHBOARD_PROJECT_SCHEMA,
         UDR_ARCHITECTURE_SELECT_SCHEMA,
@@ -334,6 +406,10 @@ try:
         project_quality_dashboard,
         select_udr_architecture,
     )
+    from .src.hermes_research_report.work_execution import (
+        WORK_EXECUTION_ASSESS_SCHEMA,
+        assess_work_execution,
+    )
 except ImportError:  # Installed wheel/module execution.
     from hermes_research_report.academic import (
         ACADEMIC_PROTOCOL_ASSESS_SCHEMA,
@@ -341,12 +417,22 @@ except ImportError:  # Installed wheel/module execution.
         assess_academic_protocol,
         assess_meta_analysis,
     )
+    from hermes_research_report.academic_integrity import (
+        ACADEMIC_INTEGRITY_ASSESS_SCHEMA,
+        assess_academic_integrity,
+    )
+    from hermes_research_report.acquisition_integrity import (
+        ACQUISITION_INTEGRITY_SCHEMA,
+        assess_acquisition_integrity,
+    )
     from hermes_research_report.advanced_academic import (
         ACADEMIC_SYNTHESIS_GATE_SCHEMA,
         CERTAINTY_ASSESS_SCHEMA,
         COMPUTATION_REPLAY_ASSESS_SCHEMA,
         EXTRACTION_ASSESS_SCHEMA,
+        FIXED_EFFECT_COMPUTE_SCHEMA,
         PRISMA_ASSESS_SCHEMA,
+        PRISMA_FLOW_ACCOUNT_SCHEMA,
         REVIEW_PROTOCOL_VALIDATE_SCHEMA,
         RISK_OF_BIAS_ASSESS_SCHEMA,
         SCREENING_ADJUDICATE_SCHEMA,
@@ -357,7 +443,9 @@ except ImportError:  # Installed wheel/module execution.
         assess_computation_replay,
         assess_extraction,
         assess_prisma,
+        assess_prisma_flow_accounting,
         assess_risk_of_bias,
+        compute_fixed_effect_estimate,
         resolve_study_graph,
         validate_review_protocol,
     )
@@ -389,7 +477,15 @@ except ImportError:  # Installed wheel/module execution.
         BUSINESS_DESIGN_ASSESS_SCHEMA,
         assess_business_design,
     )
+    from hermes_research_report.business_controls import (
+        BUSINESS_CONTROL_ASSESS_SCHEMA,
+        assess_business_control,
+    )
     from hermes_research_report.circuit import assess_circuit
+    from hermes_research_report.claim_verification import (
+        CLAIM_VERIFICATION_GRAPH_SCHEMA,
+        assess_claim_verification_graph,
+    )
     from hermes_research_report.claims import (
         CHALLENGE_EVALUATE_SCHEMA,
         CLAIM_EVALUATE_SCHEMA,
@@ -421,6 +517,14 @@ except ImportError:  # Installed wheel/module execution.
         CORPUS_MATERIALIZE_SCHEMA,
         materialize_corpus,
     )
+    from hermes_research_report.coverage_details import (
+        SEARCH_COVERAGE_DETAILS_SCHEMA,
+        assess_search_coverage_details,
+    )
+    from hermes_research_report.coverage_status import (
+        COVERAGE_STATUS_ASSESS_SCHEMA,
+        assess_coverage_status,
+    )
     from hermes_research_report.decisions import (
         DECISION_ENVELOPE_ASSESS_SCHEMA,
         DELTA_ASSESS_SCHEMA,
@@ -448,6 +552,12 @@ except ImportError:  # Installed wheel/module execution.
         assess_multiagent_independence,
         assess_obligation_preservation,
         assess_resilience_recovery,
+    )
+    from hermes_research_report.deployment import (
+        MIGRATION_MAP_SCHEMA,
+        RESOURCE_ADMISSION_SCHEMA,
+        assess_resource_admission,
+        dry_run_migration_map,
     )
     from hermes_research_report.document_graph import (
         DOCUMENT_GRAPH_BUILD_SCHEMA,
@@ -529,6 +639,10 @@ except ImportError:  # Installed wheel/module execution.
         NARRATIVE_PLAN_ASSESS_SCHEMA,
         assess_narrative_plan,
     )
+    from hermes_research_report.numeric_reproduction import (
+        NUMERIC_REPRODUCTION_SCHEMA,
+        assess_numeric_reproduction,
+    )
     from hermes_research_report.orchestration import (
         WORK_PLAN_BUILD_SCHEMA,
         build_work_plan,
@@ -571,6 +685,14 @@ except ImportError:  # Installed wheel/module execution.
         reconcile_provider_lifecycle,
         reserve_provider_budget,
     )
+    from hermes_research_report.provider_execution import (
+        PROVIDER_EXECUTION_ASSESS_SCHEMA,
+        assess_provider_execution,
+    )
+    from hermes_research_report.provider_live import (
+        PROVIDER_LIVE_PROBE_SCHEMA,
+        probe_provider_live,
+    )
     from hermes_research_report.qualification import (
         DEPLOYMENT_CANDIDATE_SCHEMA,
         DEPTH_COMPARISON_SCHEMA,
@@ -580,6 +702,10 @@ except ImportError:  # Installed wheel/module execution.
         assess_utility,
         compare_depths,
         evaluate_profile_qualification,
+    )
+    from hermes_research_report.r3_evidence import (
+        R3_EVIDENCE_SCHEMA,
+        assess_r3_evidence_field,
     )
     from hermes_research_report.report import (
         REPORT_TOOL_SCHEMA,
@@ -603,6 +729,16 @@ except ImportError:  # Installed wheel/module execution.
         create_run_contract,
         propose_run_contract_revision,
     )
+    from hermes_research_report.runtime_contracts import (
+        CAPABILITY_MODEL_SCHEMA,
+        CONTEXT_ASSEMBLY_SCHEMA,
+        DISTRIBUTION_DELIVERY_SCHEMA,
+        LIVENESS_RECONCILE_SCHEMA,
+        assemble_context_package,
+        assess_capability_model_lane,
+        assess_distribution_delivery,
+        reconcile_work_liveness,
+    )
     from hermes_research_report.schemas import (
         ARTIFACT_ASSESS_SCHEMA,
         CIRCUIT_ASSESS_SCHEMA,
@@ -621,6 +757,10 @@ except ImportError:  # Installed wheel/module execution.
         assess_capability_gap,
         resolve_scholarly_object,
     )
+    from hermes_research_report.search_execution import (
+        SEARCH_EXECUTION_TRACE_SCHEMA,
+        assess_search_execution_trace,
+    )
     from hermes_research_report.search_ledger import (
         SEARCH_LEDGER_ASSESS_SCHEMA,
         assess_search_ledger,
@@ -637,6 +777,10 @@ except ImportError:  # Installed wheel/module execution.
         compile_query_ast,
         record_search_environment,
     )
+    from hermes_research_report.security_controls import (
+        SECURITY_CONTROL_ASSESS_SCHEMA,
+        assess_security_control,
+    )
     from hermes_research_report.source_families import (
         SEARCH_COVERAGE_ASSESS_SCHEMA,
         SOURCE_POOL_AUDIT_SCHEMA,
@@ -650,6 +794,10 @@ except ImportError:  # Installed wheel/module execution.
         verify_fragment,
     )
     from hermes_research_report.state import reconcile_state
+    from hermes_research_report.state_semantics import (
+        STATE_SEMANTICS_ASSESS_SCHEMA,
+        assess_state_semantics,
+    )
     from hermes_research_report.udr import (
         QUALITY_DASHBOARD_PROJECT_SCHEMA,
         UDR_ARCHITECTURE_SELECT_SCHEMA,
@@ -657,6 +805,10 @@ except ImportError:  # Installed wheel/module execution.
         assess_udr_plan,
         project_quality_dashboard,
         select_udr_architecture,
+    )
+    from hermes_research_report.work_execution import (
+        WORK_EXECUTION_ASSESS_SCHEMA,
+        assess_work_execution,
     )
 
 
@@ -741,6 +893,10 @@ def handle_plan_build(args: object, **_kwargs: object) -> str:
     return _handle(build_work_plan, args)
 
 
+def handle_work_execution_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_work_execution, args)
+
+
 def handle_route_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_route, args)
 
@@ -749,8 +905,24 @@ def handle_search_ledger_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_search_ledger, args)
 
 
+def handle_search_execution_trace_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_search_execution_trace, args)
+
+
+def handle_search_coverage_details_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_search_coverage_details, args)
+
+
+def handle_coverage_status_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_coverage_status, args)
+
+
 def handle_corpus_materialize(args: object, **_kwargs: object) -> str:
     return _handle(materialize_corpus, args)
+
+
+def handle_acquisition_integrity_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_acquisition_integrity, args)
 
 
 def handle_source_select(args: object, **_kwargs: object) -> str:
@@ -763,6 +935,14 @@ def handle_fragment_verify(args: object, **_kwargs: object) -> str:
 
 def handle_claim_evaluate(args: object, **_kwargs: object) -> str:
     return _handle(evaluate_claim, args)
+
+
+def handle_claim_verification_graph_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_claim_verification_graph, args)
+
+
+def handle_numeric_reproduction_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_numeric_reproduction, args)
 
 
 def handle_challenge_evaluate(args: object, **_kwargs: object) -> str:
@@ -1033,6 +1213,10 @@ def handle_provider_operation_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_provider_operation, args)
 
 
+def handle_provider_execution_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_provider_execution, args)
+
+
 def handle_provider_fallback_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_provider_fallback, args)
 
@@ -1065,8 +1249,16 @@ def handle_business_design_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_business_design, args)
 
 
+def handle_business_control_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_business_control, args)
+
+
 def handle_academic_protocol_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_academic_protocol, args)
+
+
+def handle_academic_integrity_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_academic_integrity, args)
 
 
 def handle_meta_analysis_assess(args: object, **_kwargs: object) -> str:
@@ -1093,6 +1285,10 @@ def handle_prisma_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_prisma, args)
 
 
+def handle_prisma_flow_account(args: object, **_kwargs: object) -> str:
+    return _handle(assess_prisma_flow_accounting, args)
+
+
 def handle_risk_of_bias_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_risk_of_bias, args)
 
@@ -1107,6 +1303,10 @@ def handle_academic_synthesis_gate(args: object, **_kwargs: object) -> str:
 
 def handle_computation_replay_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_computation_replay, args)
+
+
+def handle_fixed_effect_compute(args: object, **_kwargs: object) -> str:
+    return _handle(compute_fixed_effect_estimate, args)
 
 
 def handle_review_assess(args: object, **_kwargs: object) -> str:
@@ -1181,8 +1381,24 @@ def handle_foundation_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_foundation, args)
 
 
+def handle_resource_admission_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_resource_admission, args)
+
+
+def handle_migration_map_dry_run(args: object, **_kwargs: object) -> str:
+    return _handle(dry_run_migration_map, args)
+
+
 def handle_state_reconcile(args: object, **_kwargs: object) -> str:
     return _handle(reconcile_state, args)
+
+
+def handle_state_semantics_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_state_semantics, args)
+
+
+def handle_security_control_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_security_control, args)
 
 
 def handle_artifact_assess(args: object, **_kwargs: object) -> str:
@@ -1203,6 +1419,30 @@ def handle_context_lifecycle_assess(args: object, **_kwargs: object) -> str:
 
 def handle_circuit_assess(args: object, **_kwargs: object) -> str:
     return _handle(assess_circuit, args)
+
+
+def handle_capability_model_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_capability_model_lane, args)
+
+
+def handle_provider_live_probe(args: object, **_kwargs: object) -> str:
+    return _handle(probe_provider_live, args)
+
+
+def handle_r3_evidence_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_r3_evidence_field, args)
+
+
+def handle_context_package_assemble(args: object, **_kwargs: object) -> str:
+    return _handle(assemble_context_package, args)
+
+
+def handle_work_liveness_reconcile(args: object, **_kwargs: object) -> str:
+    return _handle(reconcile_work_liveness, args)
+
+
+def handle_distribution_delivery_assess(args: object, **_kwargs: object) -> str:
+    return _handle(assess_distribution_delivery, args)
 
 
 def handle_dolt_commit_assess(args: object, **_kwargs: object) -> str:
@@ -1260,6 +1500,13 @@ def register(ctx: Any) -> None:
         check_fn=lambda: True,
     )
     ctx.register_tool(
+        name="research_work_execution_assess",
+        toolset="research",
+        schema=WORK_EXECUTION_ASSESS_SCHEMA,
+        handler=handle_work_execution_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
         name="research_route_assess",
         toolset="research",
         schema=ROUTE_ASSESS_SCHEMA,
@@ -1274,10 +1521,38 @@ def register(ctx: Any) -> None:
         check_fn=lambda: True,
     )
     ctx.register_tool(
+        name="research_search_execution_trace_assess",
+        toolset="research",
+        schema=SEARCH_EXECUTION_TRACE_SCHEMA,
+        handler=handle_search_execution_trace_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_search_coverage_details_assess",
+        toolset="research",
+        schema=SEARCH_COVERAGE_DETAILS_SCHEMA,
+        handler=handle_search_coverage_details_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_coverage_status_assess",
+        toolset="research",
+        schema=COVERAGE_STATUS_ASSESS_SCHEMA,
+        handler=handle_coverage_status_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
         name="research_corpus_materialize",
         toolset="research",
         schema=CORPUS_MATERIALIZE_SCHEMA,
         handler=handle_corpus_materialize,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_acquisition_integrity_assess",
+        toolset="research",
+        schema=ACQUISITION_INTEGRITY_SCHEMA,
+        handler=handle_acquisition_integrity_assess,
         check_fn=lambda: True,
     )
     ctx.register_tool(
@@ -1299,6 +1574,20 @@ def register(ctx: Any) -> None:
         toolset="research",
         schema=CLAIM_EVALUATE_SCHEMA,
         handler=handle_claim_evaluate,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_claim_verification_graph_assess",
+        toolset="research",
+        schema=CLAIM_VERIFICATION_GRAPH_SCHEMA,
+        handler=handle_claim_verification_graph_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_numeric_reproduction_assess",
+        toolset="research",
+        schema=NUMERIC_REPRODUCTION_SCHEMA,
+        handler=handle_numeric_reproduction_assess,
         check_fn=lambda: True,
     )
     ctx.register_tool(
@@ -1771,6 +2060,13 @@ def register(ctx: Any) -> None:
         check_fn=lambda: True,
     )
     ctx.register_tool(
+        name="research_provider_execution_assess",
+        toolset="research",
+        schema=PROVIDER_EXECUTION_ASSESS_SCHEMA,
+        handler=handle_provider_execution_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
         name="research_provider_fallback_assess",
         toolset="research",
         schema=PROVIDER_FALLBACK_ASSESS_SCHEMA,
@@ -1827,10 +2123,24 @@ def register(ctx: Any) -> None:
         check_fn=lambda: True,
     )
     ctx.register_tool(
+        name="research_business_control_assess",
+        toolset="research",
+        schema=BUSINESS_CONTROL_ASSESS_SCHEMA,
+        handler=handle_business_control_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
         name="research_academic_protocol_assess",
         toolset="research",
         schema=ACADEMIC_PROTOCOL_ASSESS_SCHEMA,
         handler=handle_academic_protocol_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_academic_integrity_assess",
+        toolset="research",
+        schema=ACADEMIC_INTEGRITY_ASSESS_SCHEMA,
+        handler=handle_academic_integrity_assess,
         check_fn=lambda: True,
     )
     ctx.register_tool(
@@ -1876,6 +2186,13 @@ def register(ctx: Any) -> None:
         check_fn=lambda: True,
     )
     ctx.register_tool(
+        name="research_prisma_flow_account",
+        toolset="research",
+        schema=PRISMA_FLOW_ACCOUNT_SCHEMA,
+        handler=handle_prisma_flow_account,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
         name="research_risk_of_bias_assess",
         toolset="research",
         schema=RISK_OF_BIAS_ASSESS_SCHEMA,
@@ -1901,6 +2218,13 @@ def register(ctx: Any) -> None:
         toolset="research",
         schema=COMPUTATION_REPLAY_ASSESS_SCHEMA,
         handler=handle_computation_replay_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_fixed_effect_compute",
+        toolset="research",
+        schema=FIXED_EFFECT_COMPUTE_SCHEMA,
+        handler=handle_fixed_effect_compute,
         check_fn=lambda: True,
     )
     ctx.register_tool(
@@ -2037,10 +2361,38 @@ def register(ctx: Any) -> None:
         check_fn=lambda: True,
     )
     ctx.register_tool(
+        name="research_resource_admission_assess",
+        toolset="research",
+        schema=RESOURCE_ADMISSION_SCHEMA,
+        handler=handle_resource_admission_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_migration_map_dry_run",
+        toolset="research",
+        schema=MIGRATION_MAP_SCHEMA,
+        handler=handle_migration_map_dry_run,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
         name="research_state_reconcile",
         toolset="research",
         schema=STATE_RECONCILE_SCHEMA,
         handler=handle_state_reconcile,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_state_semantics_assess",
+        toolset="research",
+        schema=STATE_SEMANTICS_ASSESS_SCHEMA,
+        handler=handle_state_semantics_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_security_control_assess",
+        toolset="research",
+        schema=SECURITY_CONTROL_ASSESS_SCHEMA,
+        handler=handle_security_control_assess,
         check_fn=lambda: True,
     )
     ctx.register_tool(
@@ -2083,6 +2435,48 @@ def register(ctx: Any) -> None:
         toolset="research",
         schema=DOLT_COMMIT_ASSESS_SCHEMA,
         handler=handle_dolt_commit_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_capability_model_assess",
+        toolset="research",
+        schema=CAPABILITY_MODEL_SCHEMA,
+        handler=handle_capability_model_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_provider_live_probe",
+        toolset="research",
+        schema=PROVIDER_LIVE_PROBE_SCHEMA,
+        handler=handle_provider_live_probe,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_r3_evidence_assess",
+        toolset="research",
+        schema=R3_EVIDENCE_SCHEMA,
+        handler=handle_r3_evidence_assess,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_context_package_assemble",
+        toolset="research",
+        schema=CONTEXT_ASSEMBLY_SCHEMA,
+        handler=handle_context_package_assemble,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_work_liveness_reconcile",
+        toolset="research",
+        schema=LIVENESS_RECONCILE_SCHEMA,
+        handler=handle_work_liveness_reconcile,
+        check_fn=lambda: True,
+    )
+    ctx.register_tool(
+        name="research_distribution_delivery_assess",
+        toolset="research",
+        schema=DISTRIBUTION_DELIVERY_SCHEMA,
+        handler=handle_distribution_delivery_assess,
         check_fn=lambda: True,
     )
     ctx.register_skill(

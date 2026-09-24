@@ -262,6 +262,37 @@ def _topological_order(
     return order, len(order) != len(nodes)
 
 
+def _verification_targets(elements, tables):
+    verification_targets = [
+        {
+            "target_id": element["element_id"],
+            "target_kind": element["kind"],
+            "critical": element["critical"],
+            "evidence_relevant": element["evidence_relevant"],
+            "quality": element["quality"],
+            "uncertainty": element["uncertainty"],
+            "value_ref": element["exact_ref"],
+        }
+        for element in elements
+        if element["evidence_relevant"]
+    ]
+    verification_targets.extend(
+        {
+            "target_id": cell["cell_id"],
+            "target_kind": "table_cell",
+            "critical": cell["critical"],
+            "evidence_relevant": cell["evidence_relevant"],
+            "quality": cell["quality"],
+            "uncertainty": cell["uncertainty"],
+            "value_ref": cell["value_ref"],
+        }
+        for table in tables
+        for cell in table["cells"]
+        if cell["evidence_relevant"]
+    )
+    return verification_targets
+
+
 def build_document_graph(request: object) -> dict[str, Any]:
     data = require_mapping(request, "request")
     require_exact_keys(data, set(DOCUMENT_GRAPH_BUILD_SCHEMA["required"]), "request")
@@ -721,33 +752,7 @@ def build_document_graph(request: object) -> dict[str, Any]:
                     "Связанный объект отсутствует.",
                 )
 
-    verification_targets = [
-        {
-            "target_id": element["element_id"],
-            "target_kind": element["kind"],
-            "critical": element["critical"],
-            "evidence_relevant": element["evidence_relevant"],
-            "quality": element["quality"],
-            "uncertainty": element["uncertainty"],
-            "value_ref": element["exact_ref"],
-        }
-        for element in elements
-        if element["evidence_relevant"]
-    ]
-    verification_targets.extend(
-        {
-            "target_id": cell["cell_id"],
-            "target_kind": "table_cell",
-            "critical": cell["critical"],
-            "evidence_relevant": cell["evidence_relevant"],
-            "quality": cell["quality"],
-            "uncertainty": cell["uncertainty"],
-            "value_ref": cell["value_ref"],
-        }
-        for table in tables
-        for cell in table["cells"]
-        if cell["evidence_relevant"]
-    )
+    verification_targets = _verification_targets(elements, tables)
     graph: dict[str, Any] = {
         "schema_version": 1,
         "document_id": document_id,
@@ -798,6 +803,15 @@ def verify_document_graph(request: object) -> dict[str, Any]:
     _version(data)
     graph = require_mapping(data["document_graph"], "request.document_graph")
     graph_hash = _hash(graph.get("graph_hash"), "request.document_graph.graph_hash")
+    if (
+        sha256_json({key: value for key, value in graph.items() if key != "graph_hash"})
+        != graph_hash
+    ):
+        fail(
+            "document_graph_hash_mismatch",
+            "request.document_graph.graph_hash",
+            "Содержимое графа изменено после построения.",
+        )
     document_id = require_string(
         graph.get("document_id"), "request.document_graph.document_id"
     )
@@ -805,6 +819,26 @@ def verify_document_graph(request: object) -> dict[str, Any]:
         graph.get("verification_targets"),
         "request.document_graph.verification_targets",
     )
+    if not targets_data:
+        fail(
+            "document_verification_targets_missing",
+            "request.document_graph.verification_targets",
+            "Пустой набор целей не подтверждает проверку документа.",
+        )
+    try:
+        expected_targets = _verification_targets(graph["elements"], graph["tables"])
+    except (KeyError, TypeError):
+        fail(
+            "document_graph_structure_invalid",
+            "request.document_graph",
+            "Структура графа неполна.",
+        )
+    if targets_data != expected_targets:
+        fail(
+            "document_verification_targets_mismatch",
+            "request.document_graph.verification_targets",
+            "Цели проверки не соответствуют элементам и ячейкам графа.",
+        )
     targets: dict[str, dict[str, Any]] = {}
     for index, raw in enumerate(targets_data):
         path = f"request.document_graph.verification_targets[{index}]"
@@ -938,7 +972,11 @@ def verify_document_graph(request: object) -> dict[str, Any]:
             "ground_truth",
             "reviewer_authority",
         }
-        require_exact_keys(observation, fields, path)
+        require_exact_keys(
+            observation,
+            fields | ({"graph_hash"} if "graph_hash" in observation else set()),
+            path,
+        )
         observation_id = require_string(
             observation["observation_id"], f"{path}.observation_id"
         )
@@ -953,6 +991,9 @@ def verify_document_graph(request: object) -> dict[str, Any]:
         observations_by_target[target_id].append(
             {
                 "observation_id": observation_id,
+                "graph_bound": "graph_hash" in observation
+                and _hash(observation["graph_hash"], f"{path}.graph_hash")
+                == graph_hash,
                 "target_id": target_id,
                 "route_id": require_string(observation["route_id"], f"{path}.route_id"),
                 "parser_id": require_string(
@@ -999,7 +1040,11 @@ def verify_document_graph(request: object) -> dict[str, Any]:
     conflict_set = []
     for target_id, target in sorted(targets.items()):
         rule = rules[target["target_kind"]]
-        target_observations = observations_by_target[target_id]
+        all_observations = observations_by_target[target_id]
+        target_observations = [row for row in all_observations if row["graph_bound"]]
+        unbound = [
+            row["observation_id"] for row in all_observations if not row["graph_bound"]
+        ]
         below_threshold = (
             target["quality"] < rule["minimum_quality"]
             or target["uncertainty"] > rule["maximum_uncertainty"]
@@ -1069,6 +1114,10 @@ def verify_document_graph(request: object) -> dict[str, Any]:
         elif not values:
             action = "human_review" if target["critical"] else "alternate_parse"
             reasons.append("verification_observation_missing")
+        if unbound:
+            action = "human_review"
+            selected_value = None
+            reasons.append("observation_graph_unbound")
         evidence_usable = action == "accept" and selected_value is not None
         decisions.append(
             {
@@ -1079,6 +1128,7 @@ def verify_document_graph(request: object) -> dict[str, Any]:
                 "uncertainty": target["uncertainty"],
                 "independent_route_count": len(signatures),
                 "ground_truth_count": len(ground_truth),
+                "unbound_observation_ids": unbound,
                 "conflict": conflict,
                 "action": action,
                 "reasons": sorted(set(reasons)),

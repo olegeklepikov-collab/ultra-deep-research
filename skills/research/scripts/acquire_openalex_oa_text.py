@@ -43,6 +43,7 @@ from hermes_research_report.academic_openalex import (
 from hermes_research_report.beta_acquisition import AcquisitionError
 from hermes_research_report.beta_modes import verify_beta_mode_plan
 from hermes_research_report.errors import ContractError
+from hermes_research_report.runtime_snapshot import runtime_guarded
 
 _WORK_SHORT = re.compile(r"^W[0-9]+$")
 
@@ -91,6 +92,7 @@ def _preflight(
     return plan, metadata, short
 
 
+@runtime_guarded
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)

@@ -22,11 +22,13 @@ except ImportError:
 from hermes_research_report.beta_modes import verify_beta_mode_plan
 from hermes_research_report.canonical import with_receipt_hash
 from hermes_research_report.errors import ContractError
+from hermes_research_report.runtime_snapshot import runtime_guarded
 
 SCRIPTS = Path(__file__).resolve().parent
 _CODE = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
 
 
+@runtime_guarded
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--question", required=True)
@@ -157,6 +159,12 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "schema_version": 1,
                 "contract": "BetaAutonomousDeepQuestionRun",
+                "execution_contract": {
+                    "kind": "standalone_local_research",
+                    "beads_work_executed": False,
+                    "dolt_commit_executed": False,
+                    "external_delivery_executed": False,
+                },
                 "run_id": run_id,
                 "status": deep["status"],
                 "plan_receipt_hash": plan["receipt_hash"],

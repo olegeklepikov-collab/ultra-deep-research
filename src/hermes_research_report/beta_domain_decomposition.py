@@ -38,7 +38,11 @@ _SPACE = {"positive", "negative", "latent"}
 
 
 def build_domain_decomposition_prompt(
-    *, question: str, profile: str, legacy_rule_instruction: bool = False
+    *,
+    question: str,
+    profile: str,
+    legacy_rule_instruction: bool = False,
+    legacy_coverage_instruction: bool = False,
 ) -> str:
     question = validate_public_question(question)
     if profile not in _PROFILES:
@@ -83,7 +87,16 @@ def build_domain_decomposition_prompt(
         "основные шаги/акторы/временные границы, периферию, отрицательные и "
         "латентные аспекты там, где применимо. Не превращайте гипотезу в факт и "
         "не заявляйте существование или отсутствие академических источников до поиска.\n\n"
-        f"ПРОФИЛЬ: {profile}\nВОПРОС: {question}"
+        + (
+            ""
+            if legacy_coverage_instruction
+            else "Для широкого исследования явно рассмотрите центральные, периферические "
+            "и маргинальные позиции, включая редкие практики, спорные трактовки и "
+            "краевые условия, а также отрицательные и латентные аспекты. "
+            "Если направление неприменимо, укажите предметную причину в exclusions; "
+            "не добавляйте фиктивный аспект ради заполнения категории.\n\n"
+        )
+        + f"ПРОФИЛЬ: {profile}\nВОПРОС: {question}"
     )
 
 
@@ -124,11 +137,16 @@ def parse_domain_decomposition(
     ):
         raise ValueError("domain_decomposition_inputs_invalid")
 
+    identical_duplicate_keys: list[str] = []
+
     def unique_pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in items:
             if key in result:
-                raise ValueError("domain_duplicate_json_key")
+                if type(result[key]) is not type(value) or result[key] != value:
+                    raise ValueError("domain_duplicate_json_key")
+                identical_duplicate_keys.append(key)
+                continue
             result[key] = value
         return result
 
@@ -284,8 +302,9 @@ def parse_domain_decomposition(
         )
     aspects = []
     unresolved_model_construct_indices = []
+    normalized_null_academic_rationale_details_aspect_indexes = []
     for index, row in enumerate(raw_aspects):
-        if type(row) is not dict or set(row) != {
+        required_fields = {
             "domain_index",
             "name",
             "question",
@@ -296,8 +315,18 @@ def parse_domain_decomposition(
             "evidence_bases",
             "academic_role",
             "academic_rationale",
-        }:
+        }
+        if (
+            type(row) is not dict
+            or set(row) - {"academic_rationale_details"} != required_fields
+            or (
+                "academic_rationale_details" in row
+                and row["academic_rationale_details"] is not None
+            )
+        ):
             raise ValueError("domain_aspect_invalid")
+        if "academic_rationale_details" in row:
+            normalized_null_academic_rationale_details_aspect_indexes.append(index)
         parent = row["domain_index"]
         indices = row["construct_indices"]
         bases = row["evidence_bases"]
@@ -399,6 +428,11 @@ def parse_domain_decomposition(
             "structured_scope_normalized": structured_scope_model is not None,
             "domains": domains,
             "aspects": aspects,
+            "missing_importance_ranks": sorted(
+                _IMPORTANCE - {a["importance"] for a in aspects}
+            ),
+            "missing_research_spaces": sorted(_SPACE - {a["space"] for a in aspects}),
+            "coverage_completeness_verified": False,
             "academic_role_conflict_count": sum(
                 any(
                     issue
@@ -413,9 +447,19 @@ def parse_domain_decomposition(
             "constructs": constructs,
             "normalized_construct_kinds": normalized_construct_kinds,
             "nested_scope_recovered_from_public_question": nested_scope_recovered_from_question,
+            "identical_duplicate_json_keys": identical_duplicate_keys,
             "compound_unit_candidate_indices": compound_unit_candidates,
             "compound_unit_semantics_verified": False,
             "unresolved_model_construct_indices": unresolved_model_construct_indices,
+            **(
+                {
+                    "normalized_null_academic_rationale_details_aspect_indexes": (
+                        normalized_null_academic_rationale_details_aspect_indexes
+                    )
+                }
+                if normalized_null_academic_rationale_details_aspect_indexes
+                else {}
+            ),
             "construct_reference_issue_count": len(unresolved_model_construct_indices),
             "constructs_with_missing_operational_rule": sum(
                 construct["operational_rule"] is None for construct in constructs

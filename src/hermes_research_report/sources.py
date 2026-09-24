@@ -6,7 +6,7 @@ import hashlib
 import re
 from typing import Any
 
-from .canonical import with_receipt_hash
+from .canonical import sha256_json, with_receipt_hash
 from .errors import (
     fail,
     require_bool,
@@ -135,6 +135,7 @@ _TRANSFORMATION_SCHEMA = {
                 "ocr",
                 "translation",
                 "normalization",
+                "pdf_text_extraction",
                 "table_extraction",
                 "formula_extraction",
             ]
@@ -143,6 +144,48 @@ _TRANSFORMATION_SCHEMA = {
         "input_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "output_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "verified_against_original": {"type": "boolean"},
+    },
+}
+_SCOPE_UNIT = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["unit_id", "component_id", "component_hash", "text_hash", "kind"],
+    "properties": {
+        "unit_id": _TEXT,
+        "component_id": _TEXT,
+        "component_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "text_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "kind": {"enum": ["main", "supplement"]},
+    },
+}
+_SCOPE_READBACK = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["scope", "original_hash", "manifest", "manifest_hash", "reads"],
+    "properties": {
+        "scope": _TEXT,
+        "original_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "manifest_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "manifest": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10000,
+            "items": _SCOPE_UNIT,
+        },
+        "reads": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["unit_id", "component_hash", "read_text"],
+                "properties": {
+                    "unit_id": _TEXT,
+                    "component_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "read_text": {"type": "string", "maxLength": 500000},
+                },
+            },
+        },
     },
 }
 FRAGMENT_VERIFY_SCHEMA = {
@@ -193,6 +236,7 @@ FRAGMENT_VERIFY_SCHEMA = {
                 "read_scope": _NULLABLE_TEXT,
                 "material_supplements_required": {"type": "boolean"},
                 "material_supplements_read": {"type": "boolean"},
+                "scope_readback": _SCOPE_READBACK,
                 "transformations": {
                     "type": "array",
                     "maxItems": 100,
@@ -243,6 +287,7 @@ FRAGMENT_VERIFY_SCHEMA = {
                     "pattern": "^[0-9a-f]{64}$",
                 },
                 "resolved_fragment": {"type": "string"},
+                "scope_manifest_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                 "used_derived_registry": {"type": "boolean"},
                 "status": {"enum": ["pass", "fail"]},
             },
@@ -445,6 +490,96 @@ def _resolve_range(
     return None
 
 
+def _scope_coverage(value, original_hash, declared_scope, supplements_required):
+    data = require_mapping(value, "scope_readback")
+    require_exact_keys(data, set(_SCOPE_READBACK["required"]), "scope_readback")
+    manifest = require_list(data["manifest"], "scope_readback.manifest")
+    reads = require_list(data["reads"], "scope_readback.reads")
+    if not manifest or len(manifest) > 10000 or len(reads) > 10000:
+        fail(
+            "scope_manifest_size_invalid",
+            "scope_readback",
+            "Нужен конечный непустой состав области.",
+        )
+    issues = []
+    if data["original_hash"] != original_hash or data["scope"] != declared_scope:
+        issues.append("scope_manifest_source_mismatch")
+    if _hash(data["manifest_hash"], "scope_readback.manifest_hash") != sha256_json(
+        manifest
+    ):
+        issues.append("scope_manifest_hash_mismatch")
+    units = {}
+    components = {}
+    for index, raw in enumerate(manifest):
+        path = f"scope_readback.manifest[{index}]"
+        row = require_mapping(raw, path)
+        require_exact_keys(row, set(_SCOPE_UNIT["required"]), path)
+        uid = require_string(row["unit_id"], path + ".unit_id")
+        if uid in units:
+            fail("scope_unit_duplicate", path, "Единица области повторена.")
+        component_id = require_string(row["component_id"], path + ".component_id")
+        _hash(row["component_hash"], path + ".component_hash")
+        _hash(row["text_hash"], path + ".text_hash")
+        kind = require_string(row["kind"], path + ".kind")
+        if kind not in {"main", "supplement"}:
+            fail("scope_unit_kind_invalid", path, "Неизвестный вид компонента.")
+        units[uid] = row
+        binding = (row["component_hash"], row["kind"])
+        if (
+            row["component_id"] in components
+            and components[row["component_id"]] != binding
+        ):
+            issues.append("scope_component_version_conflict:" + component_id)
+        components[row["component_id"]] = binding
+        if row["kind"] == "main" and row["component_hash"] != original_hash:
+            issues.append("scope_main_component_unbound")
+    if supplements_required and not any(
+        row["kind"] == "supplement" for row in units.values()
+    ):
+        issues.append("scope_supplement_manifest_missing")
+    if not any(
+        row["kind"] == "main" and row["component_hash"] == original_hash
+        for row in units.values()
+    ):
+        issues.append("scope_main_component_unbound")
+    observed = set()
+    total = 0
+    for index, raw in enumerate(reads):
+        path = f"scope_readback.reads[{index}]"
+        row = require_mapping(raw, path)
+        require_exact_keys(row, {"unit_id", "component_hash", "read_text"}, path)
+        uid = require_string(row["unit_id"], path + ".unit_id")
+        if uid in observed:
+            fail("scope_read_duplicate", path, "Повтор чтения не добавляет покрытия.")
+        observed.add(uid)
+        _hash(row["component_hash"], path + ".component_hash")
+        text = require_string(row["read_text"], path + ".read_text", nonempty=False)
+        total += len(text)
+        if uid not in units:
+            issues.append("scope_unknown_unit:" + uid)
+        elif (
+            row["component_hash"] != units[uid]["component_hash"]
+            or hashlib.sha256(text.encode()).hexdigest() != units[uid]["text_hash"]
+        ):
+            issues.append("scope_readback_mismatch:" + uid)
+    if total > 500000:
+        fail(
+            "scope_readback_size_limit",
+            "scope_readback.reads",
+            "Превышен размер проверяемого текста.",
+        )
+    missing = sorted(set(units) - observed)
+    issues.extend("scope_unit_unread:" + uid for uid in missing)
+    return {
+        "manifest_hash": data["manifest_hash"],
+        "required_unit_ids": sorted(units),
+        "observed_unit_ids": sorted(observed),
+        "unread_unit_ids": missing,
+        "status": "complete" if not issues else "partial",
+        "issues": issues,
+    }
+
+
 def verify_fragment(request: object) -> dict[str, Any]:
     data = require_mapping(request, "request")
     require_exact_keys(
@@ -468,7 +603,8 @@ def verify_fragment(request: object) -> dict[str, Any]:
     source = require_mapping(data["source_asset"], "request.source_asset")
     require_exact_keys(
         source,
-        set(FRAGMENT_VERIFY_SCHEMA["properties"]["source_asset"]["required"]),
+        set(FRAGMENT_VERIFY_SCHEMA["properties"]["source_asset"]["required"])
+        | ({"scope_readback"} if "scope_readback" in source else set()),
         "request.source_asset",
     )
     source_id = require_string(source["source_id"], "request.source_asset.source_id")
@@ -554,6 +690,7 @@ def verify_fragment(request: object) -> dict[str, Any]:
             "ocr",
             "translation",
             "normalization",
+            "pdf_text_extraction",
             "table_extraction",
             "formula_extraction",
         }:
@@ -633,7 +770,8 @@ def verify_fragment(request: object) -> dict[str, Any]:
         verification,
         set(
             FRAGMENT_VERIFY_SCHEMA["properties"]["independent_verification"]["required"]
-        ),
+        )
+        | ({"scope_manifest_hash"} if "scope_manifest_hash" in verification else set()),
         "request.independent_verification",
     )
     verifier_id = require_string(
@@ -667,6 +805,30 @@ def verify_fragment(request: object) -> dict[str, Any]:
         )
 
     issues = list(transformation_issues)
+    if read_scope != declared_scope:
+        issues.append("source_scope_mismatch")
+    scope_coverage = None
+    if "scope_readback" in source:
+        scope_coverage = _scope_coverage(
+            source["scope_readback"],
+            original_hash,
+            declared_scope,
+            supplements_required,
+        )
+        issues.extend(scope_coverage["issues"])
+        expected_manifest_hash = verification.get("scope_manifest_hash")
+        if expected_manifest_hash is None:
+            issues.append("independent_scope_manifest_missing")
+        elif _hash(
+            expected_manifest_hash, "independent_verification.scope_manifest_hash"
+        ) != sha256_json(
+            require_mapping(source["scope_readback"], "scope_readback")["manifest"]
+        ):
+            issues.append("independent_scope_manifest_mismatch")
+        if expected_manifest_hash is not None:
+            scope_coverage["independent_manifest_hash"] = expected_manifest_hash
+    elif transformations or supplements_required:
+        issues.append("scope_readbacks_missing")
     if verifier_id == producer_id:
         issues.append("verifier_not_independent")
     if readback_hash != original_hash:
@@ -723,4 +885,6 @@ def verify_fragment(request: object) -> dict[str, Any]:
         "persistence_applied": False,
         "issues": issues,
     }
+    if scope_coverage is not None:
+        payload["scope_coverage"] = scope_coverage
     return with_receipt_hash(payload)

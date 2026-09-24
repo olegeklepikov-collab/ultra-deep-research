@@ -136,10 +136,10 @@ def acquire_openalex_oa_text(
     ):
         raise AcquisitionError("oa_location_not_eligible")
     _safe_url(doi)
-    _safe_url(pdf_url)
     expected_host = urlsplit(pdf_url).hostname
     if not expected_host:
         raise AcquisitionError("oa_location_not_eligible")
+    _final_url(pdf_url, expected_host, doi)
     title = work.get("title")
     if type(title) is not str or not 5 <= len(title) <= 1000:
         raise AcquisitionError("oa_work_title_invalid")

@@ -99,8 +99,6 @@ def parse_coverage_screen(
         or type(quote) is not str
         or type(reason) is not str
         or not 10 <= len(reason.strip()) <= 1000
-        or (relation == "irrelevant" and quote != "")
-        or (relation != "irrelevant" and not 5 <= len(quote.split()) <= 20)
     ):
         raise ValueError("coverage_screen_response_invalid")
     aligned = (quote, view.find(quote)) if quote and quote in view else None
@@ -136,6 +134,9 @@ def parse_coverage_screen(
             "relation_model_proposed": relation,
             "relation_effective": effective,
             "model_quote": quote,
+            "quote_length_within_prompt_guidance": not quote
+            or 5 <= len(quote.split()) <= 20,
+            "source_excluded_globally": False,
             "quote": aligned[0] if aligned is not None else None,
             "quote_char_start": aligned[1] if aligned is not None else None,
             "quote_origin": origin,

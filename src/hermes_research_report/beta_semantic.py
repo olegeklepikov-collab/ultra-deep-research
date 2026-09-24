@@ -140,11 +140,13 @@ def validate_semantic_verification(
         or type(evidence_quote) is not str
         or any(ord(char) < 32 for char in rationale)
         or any(ord(char) < 32 and char not in "\n\t" for char in evidence_quote)
-        or (verdict != "supported" and evidence_quote != "")
     ):
         fail(
             "semantic_response_schema_invalid", "raw", "Решение или цитата непригодны."
         )
+    if verdict != "supported" and evidence_quote:
+        evidence_quote = ""
+        evidence_quote_normalization = "discarded_for_non_supporting_verdict"
     if verdict == "supported" and evidence_quote != draft["quote"]:
         verdict = "unclear"
         evidence_quote = ""

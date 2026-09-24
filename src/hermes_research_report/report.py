@@ -582,6 +582,31 @@ def build_report(request: object) -> dict[str, Any]:
     return result
 
 
+def classify_report_uncertainties(limitations: list[str]) -> dict[str, Any]:
+    """Expose missing type labels; labels do not certify semantic correctness."""
+    types = {
+        "источниковая",
+        "методическая",
+        "прокси",
+        "временная",
+        "географическая",
+        "сегментная",
+        "причинная",
+        "практическая",
+    }
+    rows = []
+    for text in limitations:
+        prefix = text.split(":", 1)[0].strip().casefold()
+        rows.append({"text": text, "type": prefix if prefix in types else None})
+    return {
+        "status": "typed"
+        if all(row["type"] for row in rows)
+        else "classification_incomplete",
+        "uncertainties": rows,
+        "semantic_classification_verified": False,
+    }
+
+
 def _render(result: dict[str, Any]) -> str:
     sources = {source["id"]: source for source in result["evidence_index"]["sources"]}
 
@@ -606,6 +631,7 @@ def _render(result: dict[str, Any]) -> str:
     if result["stop_reason"] != "not_declared":
         lines.extend([_STOP_REASONS[result["stop_reason"]], ""])
     claims = result["evidence_index"]["claims"]
+    fragments = sum(len(claim["evidence"]) for claim in claims)
     if not claims:
         lines.append("Тезисы не переданы; содержательный ответ отсутствует.")
     for index, claim in enumerate(claims, 1):
@@ -724,7 +750,9 @@ def _render(result: dict[str, Any]) -> str:
             "",
             "## Цитаты и доказательная опора",
             "",
-            "Совпадение цитат проверено; смысловая достаточность автоматически не удостоверяется.",
+            "Совпадение цитат проверено; смысловая достаточность автоматически не удостоверяется."
+            if fragments
+            else "Подтверждённая цитатная опора для основных выводов отсутствует.",
         ]
     )
     for claim in claims:
@@ -746,6 +774,11 @@ def _render(result: dict[str, Any]) -> str:
             lines.append("- Ограничение тезиса: " + _inline(limitation))
     lines.extend(["", "## Ограничения", ""])
     lines.extend("- " + _inline(item) for item in result["analysis_limitations"])
+    uncertainty_types = classify_report_uncertainties(result["analysis_limitations"])
+    if uncertainty_types["status"] == "classification_incomplete":
+        lines.append(
+            "- Классификация неопределённости не завершена: у части ограничений не указан тип; полнота разбора не подтверждена."
+        )
     if result["profile"]["depth"] != "search":
         lines.append(
             "- Полнота углублённого исследования этим сборщиком не подтверждена."
@@ -753,10 +786,25 @@ def _render(result: dict[str, Any]) -> str:
     if result["profile"]["risk"] == "high":
         lines.append("- Высокий риск: требуется независимая содержательная проверка.")
     if result["missing_work"]:
-        lines.append(
-            "- Недостающая работа: "
-            + ", ".join(f"`{item}`" for item in result["missing_work"])
-            + "."
+        missing_labels = {
+            **_STOP_REASONS,
+            "unsupported_claims": "Нужна доказательная опора для неподтверждённых тезисов.",
+            "claims_missing": "Не сформулированы подтверждённые ответы на вопрос.",
+            "comparative_analysis": "Не завершено сопоставление источников и результатов.",
+            "challenge_analysis": "Не завершена проверка содержательных альтернатив.",
+            "coverage_assessment": "Не установлено, какие приоритетные вопросы покрыты доказательствами.",
+            "robustness_review": "Не проверена устойчивость выводов при изменении предпосылок.",
+            "independent_substantive_review": "Не выполнена независимая содержательная проверка.",
+            "open_subquestions": "Остаются открытые подвопросы исследования.",
+            "subquestion_evidence_missing": "Не для каждого ответа на подвопрос есть доказательная опора.",
+            "challenge_evidence_missing": "Не для каждой альтернативы найдены проверяющие материалы.",
+            "synthesis_evidence_missing": "Обобщающий ответ не связан с достаточной доказательной опорой.",
+        }
+        lines.extend(["", "## Что требуется для продолжения", ""])
+        lines.extend(
+            "- "
+            + missing_labels.get(item, "Остаётся незавершённая обязательная проверка.")
+            for item in result["missing_work"]
         )
     if result["open_questions"]:
         lines.extend(["", "## Открытые вопросы", ""])
@@ -772,7 +820,17 @@ def _render(result: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "Технические сведения о материалах и проверках сохранены отдельно в JSON. Сборщик не посещает источники; анализ и проверка происхождения выполняются в сессии хоста.",
+            "## Состояние результата",
+            "",
+            f"- Фрагменты: точное совпадение проверено для {fragments} приведённых цитат; полнота исходных материалов этим не подтверждена."
+            if fragments
+            else "- Фрагменты: цитаты для основных выводов не переданы.",
+            "- Доказательная опора: наличие цитаты проверено; её смысловая достаточность требует отдельной оценки."
+            if fragments
+            else "- Доказательная опора: подтверждённая цитатная опора для основных выводов отсутствует.",
+            f"- Утверждения: в основной части {len(claims)} тезисов; их наличие не означает принятия вывода.",
+            "- Приёмка: окончательная содержательная приёмка этим документом не подтверждена.",
+            "- Доставка: получение результата пользователем не подтверждено; квитанция доставки сюда не передана.",
         ]
     )
     return "\n".join(lines).rstrip() + "\n"

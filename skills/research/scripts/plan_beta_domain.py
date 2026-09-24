@@ -39,6 +39,7 @@ def persist_domain_result(
     usage: dict,
     trace: dict,
     reconciled: bool,
+    cost_limit_usd: float = 0.01,
 ) -> tuple[dict, dict]:
     decomposition = parse_domain_decomposition(
         raw, question=question, profile=profile, run_id=run_id
@@ -53,6 +54,12 @@ def persist_domain_result(
             "decomposition_receipt_hash": decomposition["receipt_hash"],
             "model_session_id": usage["session_id"],
             "reported_model_cost_usd": usage["estimated_cost_usd"],
+            "cost_limit_usd": cost_limit_usd,
+            "cost_limit_exceeded": usage["estimated_cost_usd"] > cost_limit_usd,
+            "cost_overrun_usd": max(
+                0.0, round(usage["estimated_cost_usd"] - cost_limit_usd, 8)
+            ),
+            "budget_overrun_authorizes_more_calls": False,
             "model_trace_message_count": len(trace["messages"]),
             "reconciled_without_new_model_call": reconciled,
             "additional_model_calls": 0 if reconciled else 1,
@@ -74,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hermes", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--public-query-ack", action="store_true")
+    parser.add_argument("--planning-cost-limit-usd", type=float, default=0.01)
     args = parser.parse_args(argv)
     if not args.public_query_ack:
         print(
@@ -102,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
                 "schema_version": 1,
                 "run_id": run_id,
                 "wall_seconds": 120,
-                "max_estimated_cost_usd": 0.01,
+                "max_estimated_cost_usd": args.planning_cost_limit_usd,
                 "model_calls": 1,
             },
             prompt=build_domain_decomposition_prompt(
@@ -115,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
                 "profile": args.profile,
                 "question_sha256": hashlib.sha256(question.encode()).hexdigest(),
             },
+            preserve_completed_cost_overrun=True,
         )
         model_completed = True
         result, _ = persist_domain_result(
@@ -126,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             usage=usage,
             trace=trace,
             reconciled=False,
+            cost_limit_usd=args.planning_cost_limit_usd,
         )
         print(
             json.dumps(

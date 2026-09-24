@@ -340,6 +340,7 @@ def assess_beta_coverage(
                 "read_relevant_count": len(read),
                 "verified_independent_origin_count": len(roots),
                 "material_claim_count": len(claims),
+                "material_claim_refs": sorted(claims),
                 "empty_query_count": sum(
                     row["result_status"] == "empty" for row in rows
                 ),
@@ -383,6 +384,29 @@ def assess_beta_coverage(
         novelty.append(
             {
                 "batch": number,
+                "queried_atom_ids": sorted({row["atom_id"] for row in rows}),
+                "observation_count": len(rows),
+                "failed_or_refused_count": sum(
+                    row["result_status"] in {"error", "refused"} for row in rows
+                ),
+                "unassessed_hit_count": sum(
+                    row["result_status"] == "hit"
+                    and (
+                        row["relevance"] == "uncertain"
+                        or row["read_scope"] in {"none", "metadata", "abstract"}
+                    )
+                    for row in rows
+                ),
+                "novelty_assessable": bool(rows)
+                and all(
+                    row["result_status"] == "empty"
+                    or (
+                        row["result_status"] == "hit"
+                        and row["relevance"] != "uncertain"
+                        and row["read_scope"] in {"partial_text", "full_text"}
+                    )
+                    for row in rows
+                ),
                 "new_relevant_origins": len(roots - seen_roots),
                 "new_material_claims": len(claims - seen_claims),
                 "new_gap_classes": len(gaps - seen_gaps),
@@ -393,7 +417,8 @@ def assess_beta_coverage(
         seen_claims.update(claims)
         seen_gaps.update(gaps)
     plateau = len(novelty) >= 3 and all(
-        row["new_relevant_origins"]
+        row["novelty_assessable"]
+        and row["new_relevant_origins"]
         == row["new_material_claims"]
         == row["new_gap_classes"]
         == row["new_latent_signals"]

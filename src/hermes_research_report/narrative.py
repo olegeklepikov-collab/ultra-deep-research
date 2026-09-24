@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from .canonical import with_receipt_hash
 from .errors import (
@@ -178,8 +178,18 @@ def assess_narrative_plan(request: object) -> dict[str, Any]:
                 {
                     "text": require_string(statement["text"], f"{statement_path}.text"),
                     "knowledge_refs": refs,
+                    "evidence_statuses": [nodes[ref] for ref in refs if ref in nodes],
+                    "limitations": list(cast(list[str], row["uncertainties"])),
+                    "non_inferences": list(cast(list[str], row["non_inferences"])),
                 }
             )
+        uncertain_refs = [
+            ref
+            for ref in section_refs & set(nodes)
+            if nodes[ref]["status"] != "supported"
+        ]
+        if uncertain_refs and not row["uncertainties"]:
+            issues.append(f"uncertain_claim_without_local_limitations:{section_ref}")
         if section_refs & changed:
             invalidated.append(section_ref)
         sections.append(

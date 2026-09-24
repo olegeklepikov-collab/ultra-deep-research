@@ -136,8 +136,9 @@ def assess_beta_source_portfolio(request: object) -> dict[str, Any]:
                 if (
                     type(leaf_id) is not str
                     or leaf_id not in planned
-                    or planned[leaf_id]["source_family"] != "web"
-                    or row.get("declared_source_family") != "web"
+                    or planned[leaf_id]["source_family"] not in {"web", "official"}
+                    or row.get("declared_source_family")
+                    != planned[leaf_id]["source_family"]
                     or leaf_id in observed
                 ):
                     fail(
@@ -182,7 +183,7 @@ def assess_beta_source_portfolio(request: object) -> dict[str, Any]:
                 observed[leaf_id] = {
                     "leaf_id": leaf_id,
                     "provider": "keenable_configured",
-                    "source_family": "web",
+                    "source_family": planned[leaf_id]["source_family"],
                     "status": "candidate" if positive else "failed",
                     "reason": row.get("reason"),
                     "read_scope": "extracted_text_only"
@@ -190,7 +191,9 @@ def assess_beta_source_portfolio(request: object) -> dict[str, Any]:
                     else "extracted_text_screened_unverified"
                     if screened_count
                     else "none",
-                    "candidate_count": 1 if positive else 0,
+                    "candidate_count": row.get("retained_candidate_count", 1)
+                    if positive
+                    else 0,
                     "retained_screened_text_count": screened_count,
                     "failed_extract_attempt_count": failed_extract_count,
                     "route_configuration_verified": receipt.get(

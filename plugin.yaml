@@ -14,12 +14,19 @@ provides_tools:
   - research_budget_assess
   - research_beta_mode_plan_build
   - research_plan_build
+  - research_work_execution_assess
   - research_route_assess
   - research_search_ledger_assess
+  - research_search_execution_trace_assess
+  - research_search_coverage_details_assess
+  - research_coverage_status_assess
   - research_corpus_materialize
+  - research_acquisition_integrity_assess
   - research_source_select
   - research_fragment_verify
   - research_claim_evaluate
+  - research_claim_verification_graph_assess
+  - research_numeric_reproduction_assess
   - research_challenge_evaluate
   - research_synthesis_assess
   - research_evidence_standard_create
@@ -87,6 +94,7 @@ provides_tools:
   - research_provider_manifest_build
   - research_provider_schema_diff
   - research_provider_operation_assess
+  - research_provider_execution_assess
   - research_provider_fallback_assess
   - research_provider_budget_reserve
   - research_provider_lifecycle_reconcile
@@ -95,17 +103,21 @@ provides_tools:
   - research_scholarly_object_resolve
   - research_capability_gap_assess
   - research_business_design_assess
+  - research_business_control_assess
   - research_academic_protocol_assess
+  - research_academic_integrity_assess
   - research_meta_analysis_assess
   - research_review_protocol_validate
   - research_screening_adjudicate
   - research_study_graph_resolve
   - research_extraction_assess
   - research_prisma_assess
+  - research_prisma_flow_account
   - research_risk_of_bias_assess
   - research_certainty_assess
   - research_academic_synthesis_gate
   - research_computation_replay_assess
+  - research_fixed_effect_compute
   - research_review_assess
   - research_acceptance_assess
   - research_release_assess
@@ -125,11 +137,21 @@ provides_tools:
   - research_greenfield_assess
   - research_greenfield_accept
   - research_foundation_assess
+  - research_resource_admission_assess
+  - research_migration_map_dry_run
   - research_state_reconcile
+  - research_state_semantics_assess
+  - research_security_control_assess
   - research_artifact_assess
   - research_fragment_promote
   - research_installation_assess
   - research_context_lifecycle_assess
   - research_circuit_assess
   - research_dolt_commit_assess
+  - research_capability_model_assess
+  - research_provider_live_probe
+  - research_r3_evidence_assess
+  - research_context_package_assemble
+  - research_work_liveness_reconcile
+  - research_distribution_delivery_assess
 provides_hooks: []

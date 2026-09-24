@@ -214,18 +214,29 @@ def parse_coverage_proposal(
         definitions[facet_id] = definition.strip()
         seen_labels.add(name.strip().casefold())
     normalized_branches = []
+    branch_closure_candidates: list[dict[str, Any]] = []
     seen_branches: set[str] = set()
     for index, item in enumerate(branches, 1):
-        if type(item) is not dict or set(item) != {"facet_index", "question"}:
+        required_branch_fields = {"facet_index", "question"}
+        if type(item) is not dict or set(item) not in (
+            required_branch_fields,
+            required_branch_fields | {"closure_criterion"},
+        ):
             raise ValueError("coverage_proposal_branch_invalid")
         parent = item["facet_index"]
         branch_question = item["question"]
+        closure_candidate = item.get("closure_criterion")
         if (
             type(parent) is not int
             or not 0 <= parent < len(facet_ids)
             or type(branch_question) is not str
             or not 10 <= len(branch_question.strip()) <= 500
             or branch_question.strip().casefold() in seen_branches
+            or closure_candidate is not None
+            and (
+                type(closure_candidate) is not str
+                or not 15 <= len(closure_candidate.strip()) <= 1000
+            )
         ):
             raise ValueError("coverage_proposal_branch_invalid")
         normalized_branches.append(
@@ -235,6 +246,14 @@ def parse_coverage_proposal(
                 "question": branch_question.strip(),
             }
         )
+        if closure_candidate is not None:
+            branch_closure_candidates.append(
+                {
+                    "branch_index": index - 1,
+                    "closure_criterion": closure_candidate.strip(),
+                    "verified": False,
+                }
+            )
         seen_branches.add(branch_question.strip().casefold())
     normalized_atoms = []
     seen_atoms: set[str] = set()
@@ -242,6 +261,7 @@ def parse_coverage_proposal(
     recovered_construct_refs: list[dict[str, Any]] = []
     model_origin_dimensions: list[dict[str, Any]] = []
     normalized_family_aliases: list[dict[str, Any]] = []
+    normalized_null_polarities_note_atom_indexes: list[int] = []
     defaulted_origin_requirements: list[int] = []
     known_construct_refs = (
         {row["construct_id"] for row in bound["constructs"]}
@@ -258,11 +278,20 @@ def parse_coverage_proposal(
             "required_families",
             "required_polarities",
         }
-        if type(item) is not dict or set(item) not in (
-            required_fields,
-            required_fields | {"required_independent_origins"},
+        if type(item) is not dict:
+            raise ValueError("coverage_proposal_atom_invalid")
+        fields = set(item)
+        if (
+            fields - {"required_polarities_note"}
+            not in (required_fields, required_fields | {"required_independent_origins"})
+            or (
+                "required_polarities_note" in fields
+                and item["required_polarities_note"] is not None
+            )
         ):
             raise ValueError("coverage_proposal_atom_invalid")
+        if "required_polarities_note" in fields:
+            normalized_null_polarities_note_atom_indexes.append(index - 1)
         parent = item["branch_index"]
         atom_question = item["question"]
         closure = item["closure_criterion"]
@@ -411,11 +440,21 @@ def parse_coverage_proposal(
             "facet_count": len(facet_ids),
             "branch_count": len(normalized_branches),
             "atom_count": len(normalized_atoms),
+            "branch_closure_candidates": branch_closure_candidates,
             "normalized_origin_family_lists": normalized_origin_specs,
             "recovered_construct_refs": recovered_construct_refs,
             "model_origin_dimensions": model_origin_dimensions,
             "model_origin_dimensions_are_not_independent_sources": True,
             "normalized_family_aliases": normalized_family_aliases,
+            **(
+                {
+                    "normalized_null_polarities_note_atom_indexes": (
+                        normalized_null_polarities_note_atom_indexes
+                    )
+                }
+                if normalized_null_polarities_note_atom_indexes
+                else {}
+            ),
             "defaulted_origin_requirement_atom_indexes": defaulted_origin_requirements,
             "required_importance_rank_gaps": structural[
                 "required_importance_rank_gaps"

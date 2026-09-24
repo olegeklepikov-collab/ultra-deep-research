@@ -26,7 +26,9 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _validated_url(value: str, publisher_host: str) -> tuple[str, str, str]:
+def _validated_url(
+    value: str, publisher_host: str, *, max_query_chars: int = 500
+) -> tuple[str, str, str]:
     if type(value) is not str or not 0 < len(value) <= 2048:
         raise AcquisitionError("publisher_url_invalid")
     try:
@@ -43,7 +45,9 @@ def _validated_url(value: str, publisher_host: str) -> tuple[str, str, str]:
         or parsed.password
         or parsed.fragment
         or port not in (None, 443)
-        or len(parsed.query) > 500
+        or type(max_query_chars) is not int
+        or not 0 <= max_query_chars <= 1800
+        or len(parsed.query) > max_query_chars
         or not (host == "doi.org" or host == base or host.endswith("." + base))
     ):
         raise AcquisitionError("publisher_url_invalid")
