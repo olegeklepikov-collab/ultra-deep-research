@@ -19,6 +19,7 @@ from .canonical import sha256_json
 _ENV = "HERMES_RESEARCH_RUNTIME_SNAPSHOT"
 _FILES = ("config.yaml", ".env", "auth.json")
 _ROUTE_ENV = (
+    "HERMES_RESEARCH_MODEL_CLASS",
     "HERMES_MANAGED_DIR",
     "HERMES_PROFILE",
     "HERMES_MODEL",

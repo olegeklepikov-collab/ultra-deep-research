@@ -1,0 +1,21 @@
+{
+  "contract": "LocalSoftwareReleasePackage",
+  "research_revision": "r152",
+  "foundation_revision": "v21",
+  "foundation_source_commit": "a3305205a77ac7a10abbb7692076090106132559",
+  "foundation_source_tree_clean": true,
+  "files": {
+    "research.zip": "22656292a9a8987afcd0fbf085e525814a6477f9b4a29fa21055b578da3677cb",
+    "foundation.zip": "3f64a4ae41134ac07ab8bfccb05ae77b13faa8dc2d1133452a8d4bad7cf74b5e",
+    "foundation.zip.minisig": "b94ad412162025cf29c9b64bc04746b368cc16a77bb50e19b6195376a89f52aa",
+    "release-signing.pub": "2295aaab3cb418c4f81a867a701a8187e8cdd0f73105a1f318c1faf981dfdb1a",
+    "README.md": "e3f532dfaf4c3c41abb02373a23edc32289a3da79d9428afd4226bef70fa1c3a"
+  },
+  "compatibility_pin_verified": true,
+  "signature_status": "verified",
+  "software_release_status": "signed_release_ready",
+  "production_activation_allowed": false,
+  "research_profile_qualification_inherited": false,
+  "qualified_research_profiles": [],
+  "scope": "Pinned software/framework release only. Research results and depth profiles require independent qualification; partial and insufficient_evidence remain valid outcomes."
+}

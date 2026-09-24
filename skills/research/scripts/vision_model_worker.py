@@ -31,9 +31,13 @@ def main():
 
     request = json.loads(read_private_bytes(Path(sys.argv[1]), maximum=2_000_000))
     if (
-        request.get("provider"), request.get("model"), request.get("reasoning")
+        request.get("provider"), request.get("model"), request.get("reasoning"),
+        request.get("requested_model_class"), request.get("model_class_mapping_hash"),
+        request.get("model_route_source"), request.get("model_class_selection_source"),
     ) != (
-        attempt.get("provider"), attempt.get("model"), attempt.get("reasoning")
+        attempt.get("provider"), attempt.get("model"), attempt.get("reasoning"),
+        attempt.get("requested_model_class"), attempt.get("model_class_mapping_hash"),
+        attempt.get("model_route_source"), attempt.get("model_class_selection_source"),
     ):
         raise ValueError("vision_route_not_bounded")
     image = read_private_bytes(Path(request["image"]), maximum=8_000_000)
@@ -80,6 +84,9 @@ def main():
                 "content_types": [p["type"] for p in parts],
                 "provider": request["provider"],
                 "model": request["model"],
+                "requested_model_class": request["requested_model_class"],
+                "model_class_selection_source": request["model_class_selection_source"],
+                "model_class_mapping_hash": request["model_class_mapping_hash"],
             }
         )
         write_exclusive_json(

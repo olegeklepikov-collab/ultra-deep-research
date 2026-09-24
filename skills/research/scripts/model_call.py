@@ -43,12 +43,11 @@ from hermes_research_report.canonical import sha256_json, verify_receipt_hash, w
 from hermes_research_report.errors import ContractError
 from hermes_research_report.runtime_snapshot import verify_runtime
 
-_DEFAULT_PROVIDER = "openrouter"
-_DEFAULT_MODEL = "openai/gpt-5.4-nano"
-_ROUTES = {
-    (_DEFAULT_PROVIDER, _DEFAULT_MODEL): "none",
-    ("openai-codex", "gpt-5.6-sol"): "low",
-}
+_CLASS_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,159}$")
+_REASONING = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+_MODEL_CLASS_ENV = "HERMES_RESEARCH_MODEL_CLASS"
 MAX_WALL_SECONDS = 240
 MAX_MODEL_RESPONSE_BYTES = 1_048_576
 MAX_MODEL_TRACE_BYTES = 4_000_000
@@ -65,6 +64,10 @@ _RESERVED = {
     "provider",
     "model",
     "reasoning",
+    "requested_model_class",
+    "model_class_selection_source",
+    "model_route_source",
+    "model_class_mapping_hash",
     "max_total_tokens",
     "max_estimated_cost_usd",
     "model_calls_limit",
@@ -78,49 +81,135 @@ class ModelCallError(ValueError):
         super().__init__(code)
 
 
-def configured_model_route(config: object) -> tuple[str, str, str]:
-    """Use only an explicit, bounded Hermes model pair or the historic default."""
+def _model_selection(config: object, requested_class: object) -> dict[str, Any]:
+    """Resolve a named research class, or the operator's Hermes default route."""
     if type(config) is not dict:
         raise ValueError("model_route_invalid")
-    model_config = config.get("model")
-    if model_config in (None, ""):
-        return _DEFAULT_PROVIDER, _DEFAULT_MODEL, _ROUTES[(_DEFAULT_PROVIDER, _DEFAULT_MODEL)]
-    if type(model_config) is not dict:
+    research = config.get("research", {})
+    if type(research) is not dict:
+        raise ValueError("model_class_config_invalid")
+    classes = research.get("model_classes")
+    default_class = research.get("default_model_class")
+    if requested_class is not None and (
+        type(requested_class) is not str or not _CLASS_NAME.fullmatch(requested_class)
+    ):
+        raise ValueError("model_class_invalid")
+    if classes is None:
+        if requested_class is not None or default_class is not None:
+            raise ValueError("model_class_not_configured")
+        model_config = config.get("model")
+        if type(model_config) is not dict:
+            raise ValueError("model_route_invalid")
+        provider, model = model_config.get("provider"), model_config.get("default")
+        agent = config.get("agent", {})
+        if type(agent) is not dict:
+            raise ValueError("model_route_invalid")
+        configured_reasoning = agent.get("reasoning_effort")
+        reasoning = (
+            "none"
+            if configured_reasoning in (None, "", False)
+            else configured_reasoning
+        )
+        selected_class = None
+        source = "hermes_model_default"
+        class_source = "not_applicable"
+        mapping_hash = None
+    else:
+        if type(classes) is not dict or not classes:
+            raise ValueError("model_class_config_invalid")
+        if default_class is not None and (
+            type(default_class) is not str or not _CLASS_NAME.fullmatch(default_class)
+        ):
+            raise ValueError("model_class_config_invalid")
+        if any(type(name) is not str or not _CLASS_NAME.fullmatch(name) for name in classes):
+            raise ValueError("model_class_config_invalid")
+        for entry in classes.values():
+            if (
+                type(entry) is not dict
+                or set(entry) != {"provider", "model", "reasoning"}
+                or not _valid_route(entry["provider"], entry["model"], entry["reasoning"])
+            ):
+                raise ValueError("model_class_config_invalid")
+        selected_class = requested_class or default_class
+        if selected_class is None:
+            raise ValueError("model_class_required")
+        if selected_class not in classes:
+            raise ValueError("model_class_unknown")
+        entry = classes[selected_class]
+        provider, model, reasoning = entry["provider"], entry["model"], entry["reasoning"]
+        source = "research_model_class"
+        class_source = "environment" if requested_class is not None else "configured_default"
+        mapping_hash = sha256_json({"model_classes": classes, "default_model_class": default_class})
+    if not _valid_route(provider, model, reasoning):
         raise ValueError("model_route_invalid")
-    provider = model_config.get("provider")
-    model = model_config.get("default")
-    if provider in (None, "") and model in (None, ""):
-        return _DEFAULT_PROVIDER, _DEFAULT_MODEL, _ROUTES[(_DEFAULT_PROVIDER, _DEFAULT_MODEL)]
-    if type(provider) is not str or type(model) is not str:
-        raise ValueError("model_route_invalid")
-    route = (provider, model)
-    if route not in _ROUTES:
-        raise ValueError("model_route_not_allowed")
-    return provider, model, _ROUTES[route]
+    return {
+        "provider": provider,
+        "model": model,
+        "reasoning": reasoning,
+        "requested_model_class": selected_class,
+        "model_class_selection_source": class_source,
+        "model_route_source": source,
+        "model_class_mapping_hash": mapping_hash,
+    }
+
+
+def _valid_route(provider: object, model: object, reasoning: object) -> bool:
+    return bool(
+        type(provider) is str
+        and _PROVIDER_NAME.fullmatch(provider)
+        and provider != "auto"
+        and type(model) is str
+        and _MODEL_NAME.fullmatch(model)
+        and "://" not in model
+        and type(reasoning) is str
+        and reasoning in _REASONING
+    )
+
+
+def configured_model_route(
+    config: object, requested_class: str | None = None
+) -> tuple[str, str, str]:
+    selection = _model_selection(config, requested_class)
+    return selection["provider"], selection["model"], selection["reasoning"]
+
+
+def _startup_model_selection() -> dict[str, Any]:
+    """Freeze the operator route once for existing module-level consumers."""
+    unresolved = {
+        "provider": "", "model": "", "reasoning": "",
+        "requested_model_class": None, "model_route_source": "unresolved",
+        "model_class_selection_source": "unresolved",
+        "model_class_mapping_hash": None,
+    }
+    if not os.environ.get("HERMES_HOME"):
+        return unresolved
+    try:
+        config_module = importlib.import_module("hermes_cli.config")
+        return _model_selection(config_module.load_config(), os.environ.get(_MODEL_CLASS_ENV))
+    except (ImportError, ValueError, OSError):
+        # The call preflight will report the precise failure before any model request.
+        return unresolved
 
 
 def _startup_model_route() -> tuple[str, str, str]:
-    """Freeze the bounded route once for existing module-level consumers."""
-    if not os.environ.get("HERMES_HOME"):
-        return configured_model_route({})
-    try:
-        config_module = importlib.import_module("hermes_cli.config")
-        return configured_model_route(config_module.load_config())
-    except (ImportError, ValueError, OSError):
-        # The call preflight will report the precise failure before any model request.
-        return configured_model_route({})
+    selection = _startup_model_selection()
+    return selection["provider"], selection["model"], selection["reasoning"]
 
 
-PROVIDER, MODEL, REASONING = _startup_model_route()
+_STARTUP_SELECTION = _startup_model_selection()
+PROVIDER = _STARTUP_SELECTION["provider"]
+MODEL = _STARTUP_SELECTION["model"]
+REASONING = _STARTUP_SELECTION["reasoning"]
 
 
-def cost_accounting(usage: dict[str, Any], provider: str) -> dict[str, Any]:
+def cost_accounting(
+    usage: dict[str, Any], provider: str, selection: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Preserve subscription inclusion without treating zero as a cash price."""
     status, source = usage.get("cost_status"), usage.get("cost_source")
     estimate = usage.get("estimated_cost_usd")
     included = (
-        provider == "openai-codex"
-        and status == "included"
+        status == "included"
         and source == "none"
         and type(estimate) in (int, float)
         and estimate == 0
@@ -128,8 +217,10 @@ def cost_accounting(usage: dict[str, Any], provider: str) -> dict[str, Any]:
     scope = (
         "subscription_included_not_cash_price"
         if included
-        else "provider_estimate"
-        if provider == _DEFAULT_PROVIDER
+        else "provider_reported_estimate"
+        if type(estimate) in (int, float) and source not in (None, "", "none")
+        else "legacy_numeric_estimate"
+        if type(estimate) in (int, float) and estimate > 0 and status is None and source is None
         else "unverified"
     )
     return with_receipt_hash(
@@ -137,6 +228,10 @@ def cost_accounting(usage: dict[str, Any], provider: str) -> dict[str, Any]:
             "contract": "BetaModelCostAccounting",
             "provider": provider,
             "model": usage.get("model"),
+            "requested_model_class": selection.get("requested_model_class") if selection else None,
+            "model_class_selection_source": selection.get("model_class_selection_source") if selection else None,
+            "model_route_source": selection.get("model_route_source") if selection else None,
+            "model_class_mapping_hash": selection.get("model_class_mapping_hash") if selection else None,
             "session_id": usage.get("session_id"),
             "estimated_cost_usd": estimate,
             "cost_status": status,
@@ -209,6 +304,7 @@ def prompt_binding_matches(
 def vision_binding_matches(
     output: Path, trace: dict, prompt: str, image_sha: str, raw: str,
     provider: str = PROVIDER, model: str = MODEL,
+    selection: dict[str, Any] | None = None,
 ) -> bool:
     content = trace["messages"][0].get("content")
     if prompt_binding_matches(content, prompt, image_sha):
@@ -225,6 +321,14 @@ def vision_binding_matches(
             and sent.get("content_types") == ["text", "image_url"]
             and sent.get("provider") == provider
             and sent.get("model") == model
+            and (
+                selection is None
+                or (
+                    sent.get("requested_model_class") == selection["requested_model_class"]
+                    and sent.get("model_class_selection_source") == selection["model_class_selection_source"]
+                    and sent.get("model_class_mapping_hash") == selection["model_class_mapping_hash"]
+                )
+            )
             and observed.get("input_receipt_hash") == sent["receipt_hash"]
             and observed.get("session_id") == trace.get("session_id", trace.get("id"))
             and observed.get("response_sha256")
@@ -313,8 +417,11 @@ def run_tool_free_model(
         configured = config_module.load_config()
         if configured.get("fallback_model") or configured.get("fallback_providers"):
             raise ValueError("model_fallback_route_not_bounded")
-        provider, model, reasoning = configured_model_route(configured)
-        if (provider, model, reasoning) != (PROVIDER, MODEL, REASONING):
+        selection = _model_selection(configured, os.environ.get(_MODEL_CLASS_ENV))
+        provider, model, reasoning = (
+            selection["provider"], selection["model"], selection["reasoning"]
+        )
+        if selection != _STARTUP_SELECTION:
             raise ValueError("model_route_changed_since_import")
         model_tools = importlib.import_module("model_tools")
         if model_tools.get_tool_definitions(
@@ -342,6 +449,10 @@ def run_tool_free_model(
             "provider": provider,
             "model": model,
             "reasoning": reasoning,
+            "requested_model_class": selection["requested_model_class"],
+            "model_class_selection_source": selection["model_class_selection_source"],
+            "model_route_source": selection["model_route_source"],
+            "model_class_mapping_hash": selection["model_class_mapping_hash"],
             "max_total_tokens": token_limit,
             "max_estimated_cost_usd": limit,
             "model_calls_limit": model_calls,
@@ -378,6 +489,10 @@ def run_tool_free_model(
                     "provider": provider,
                     "model": model,
                     "reasoning": reasoning,
+                    "requested_model_class": selection["requested_model_class"],
+                    "model_class_selection_source": selection["model_class_selection_source"],
+                    "model_class_mapping_hash": selection["model_class_mapping_hash"],
+                    "model_route_source": selection["model_route_source"],
                     "usage_file": str(usage_file),
                 },
             )
@@ -473,7 +588,7 @@ def run_tool_free_model(
             raise ValueError("model_trace_invalid")
         write_exclusive_json(output / "model-trace.json", trace)
         if image_sha and not vision_binding_matches(
-            output, trace, prompt, image_sha, raw, provider, model
+            output, trace, prompt, image_sha, raw, provider, model, selection
         ):
             raise ValueError("vision_trace_image_not_bound")
         validate_tool_free_observation(
@@ -486,7 +601,7 @@ def run_tool_free_model(
             max_total_tokens=token_limit,
             preserve_completed_cost_overrun=preserve_completed_cost_overrun,
         )
-        accounting = cost_accounting(usage, provider)
+        accounting = cost_accounting(usage, provider, selection)
         write_exclusive_json(output / "cost-accounting.json", accounting)
         if accounting["accounting_scope"] == "unverified":
             raise ValueError("model_cost_status_unverified")
