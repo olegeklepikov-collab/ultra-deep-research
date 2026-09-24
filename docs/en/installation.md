@@ -2,7 +2,7 @@
 
 [Home](../../README.md) · [Русский](../ru/installation.md)
 
-> These installation steps reproduce the signed r152 release. For class-based routing in current development, see [model classes](model-classes.md).
+> These steps reproduce the signed r153/v22 release, including [model classes](model-classes.md).
 
 ## Choose the deployment surface
 
@@ -27,11 +27,11 @@ The Hermes plugin installer displays Python dependencies but does not automatica
 Use an empty directory. The published bundle is immutable; checksums refer to that bundle, not this evolving documentation.
 
 ```sh
-mkdir udr-r152-v21
-cd udr-r152-v21
-gh release download v0.41.0a1-r152-v21   --repo olegeklepikov-collab/ultra-deep-research   --pattern hermes-local-release-r152-v21.zip
-printf '%s  %s\n'   02c5032a8626d7a5ca782b78067530de83fe808a413dbbdf373850620e2cf334   hermes-local-release-r152-v21.zip | shasum -a 256 -c -
-unzip hermes-local-release-r152-v21.zip
+mkdir udr-r153-v22
+cd udr-r153-v22
+gh release download v0.41.0a1-r153-v22 --repo olegeklepikov-collab/ultra-deep-research
+shasum -a 256 -c SHA256SUMS
+unzip -n hermes-local-release-r153-v22.zip
 minisign -Vm foundation.zip -p release-signing.pub
 ```
 
@@ -39,17 +39,30 @@ minisign -Vm foundation.zip -p release-signing.pub
 
 ## Install Research into a new instance
 
-Choose and initialize a new Hermes home using the supported Hermes setup flow; do not point these variables at a working instance accidentally. Then install the exact release commit:
+Choose and initialize a new Hermes home using the supported Hermes setup flow; do not point these variables at a working instance accidentally. Configure your Git author name and email first. Then create a local Git source from the verified `research.zip` manifest and install that exact local commit:
 
 ```sh
 export HERMES_HOME="$HOME/.hermes-udr"
 export HERMES_FOUNDATION_ROOT="$HERMES_HOME/foundation"
-hermes plugins install olegeklepikov-collab/ultra-deep-research   --ref 9077d24d5e7b6dda5db7902bac2a927503791db6 --no-enable
+unzip -n research.zip -d research-source
+python3 - <<'PYCODE'
+import json
+import subprocess
+from pathlib import Path
+root = Path("research-source").resolve()
+manifest = json.loads((root / "bundle-manifest.json").read_text())
+files = [row["path"] for row in manifest["files"]] + ["bundle-manifest.json"]
+subprocess.run(["git", "-C", str(root), "init", "-b", "release"], check=True)
+subprocess.run(["git", "-C", str(root), "add", "--", *files], check=True)
+subprocess.run(["git", "-C", str(root), "commit", "-m", "Exact Research r153 package"], check=True)
+PYCODE
+UDR_SOURCE_REF="$(git -C research-source rev-parse HEAD)"
+hermes plugins install "file://$PWD/research-source" --ref "$UDR_SOURCE_REF" --no-enable
 hermes plugins doctor ultra-deep-research --ci
 hermes plugins enable ultra-deep-research --no-allow-tool-override
 ```
 
-The release tag is `v0.41.0a1-r152-v21`. Pinning the full commit makes the source selection unambiguous. The default branch is not the installation identity of this release.
+The release tag is `v0.41.0a1-r153-v22`. The local commit above is generated from the archive bytes and differs from the public source commit. Its manifest-listed files, not the mutable repository tree or README, define the installed package.
 
 ## Authenticate and select the model
 
@@ -65,6 +78,13 @@ Complete the device-login instructions, then add the following model/source conf
 model:
   provider: openai-codex
   default: gpt-5.6-sol
+research:
+  default_model_class: balanced
+  model_classes:
+    balanced:
+      provider: openai-codex
+      model: gpt-5.6-sol
+      reasoning: low
 
 web:
   search_backend: keenable
@@ -79,7 +99,7 @@ web:
 
 The three `paid` tier entries exclude those vendors from the keyless fallback ring; the bounded workflow selects only Keenable and disables rescue. This does not provision credentials or authorize paid calls to those providers.
 
-The other bounded model pair is `openrouter` with `openai/gpt-5.4-nano`, with operator-provided OpenRouter credentials. Other model pairs are not implicitly accepted by this release's restricted model worker. Disable `fallback_model` and `fallback_providers` for bounded calls. Do not change configuration during a run: the runtime fingerprint is checked before subsequent operations.
+The `balanced` label is an operator-selected route, not a quality grade. You may map a class to another Hermes-supported, authorized provider/model/reasoning combination; the concrete route is recorded and checked during the run. Without a class table, the worker uses the loaded Hermes `model.provider` and `model.default`. Disable `fallback_model` and `fallback_providers` for bounded calls. Do not change configuration during a run: the runtime fingerprint is checked before subsequent operations.
 
 OAuth credentials stay in the selected home's private auth store. Never add them to the repository. An `included` cost record with zero per-call estimate is subscription accounting, not a statement that the entire workflow has no economic cost.
 
@@ -98,7 +118,7 @@ manifest = json.loads((root / "bundle-manifest.json").read_text())
 files = [row["path"] for row in manifest["files"]] + ["bundle-manifest.json"]
 subprocess.run(["git", "-C", str(root), "init", "-b", "release"], check=True)
 subprocess.run(["git", "-C", str(root), "add", "--", *files], check=True)
-subprocess.run(["git", "-C", str(root), "commit", "-m", "Exact Foundation v21 package"], check=True)
+subprocess.run(["git", "-C", str(root), "commit", "-m", "Exact Foundation v22 package"], check=True)
 PYCODE
 UDR_FOUNDATION_REF="$(git -C foundation-source rev-parse HEAD)"
 hermes plugins install "file://$PWD/foundation-source" \
@@ -112,7 +132,7 @@ Complete the packaged `README.md`, `RELEASE.md`, `DOLT_SQL.md` and `RECOVERY.md`
 1. Create a new checkout of the Hermes commit in `bridge-lock.json`; apply the packaged callback patch there after checking its source hash and `git apply --check`. Verify the patched Telegram file hash.
 2. Create new Foundation roots, profiles, service identities, Docker networks/volumes and local credentials. Provision the pinned SQL, memory, graph and retrieval components.
 3. Preview `foundation_bridge_migrate` with `apply=false`; apply migrations only to the intended new root, then initialize the relevant profile/index/graph/memory/Beads components.
-4. Stage the Foundation ZIP, signature and public key in `HERMES_FOUNDATION_ROOT/releases/hermes-foundation-bridge-0.12.0/` using the filenames in the packaged release guide. Invoke `foundation_release_verify` with version `0.12.0` and commit `a3305205a77ac7a10abbb7692076090106132559`.
+4. Stage the Foundation ZIP, signature and public key in `HERMES_FOUNDATION_ROOT/releases/hermes-foundation-bridge-0.12.0/` using the filenames in the packaged release guide. Invoke `foundation_release_verify` with version `0.12.0` and commit `8dd99cca1755d2f7a6e8513b9e7a72bb23f52752`.
 5. Inspect `foundation_bridge_health`, complete the applicable instance gates, and record the separate operator activation decision. Enabling the plugin registers its tools; it does not activate production.
 
 These are explicit deployment steps; the combined ZIP is not a one-click installer or a backup of the author's working environment.

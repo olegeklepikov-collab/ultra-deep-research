@@ -48,4 +48,4 @@ New deployments use new roots, profiles, stores, service identities and operator
 
 Foundation gates G0–G8 cover structure, infrastructure, memory/graph, evidence fragments, Telegram, profiles, multi-agent work, operations and integration. Research also has its own qualification records. Their similarly named vectors are not interchangeable. `foundation_ready` must not promote a research profile, and a signed archive must not itself activate production.
 
-See [operations](release-and-operations.md) and the [release source](https://github.com/olegeklepikov-collab/ultra-deep-research/tree/v0.41.0a1-r152-v21).
+See [operations](release-and-operations.md) and the [release source](https://github.com/olegeklepikov-collab/ultra-deep-research/tree/v0.41.0a1-r153-v22).

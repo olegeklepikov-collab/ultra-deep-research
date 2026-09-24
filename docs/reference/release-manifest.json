@@ -1,15 +1,14 @@
 {
-  "contract": "LocalSoftwareReleasePackage",
-  "research_revision": "r152",
-  "foundation_revision": "v21",
-  "foundation_source_commit": "a3305205a77ac7a10abbb7692076090106132559",
+  "contract": "SoftwareReleaseComponents",
+  "research_revision": "r153",
+  "foundation_revision": "v22",
+  "foundation_source_commit": "8dd99cca1755d2f7a6e8513b9e7a72bb23f52752",
   "foundation_source_tree_clean": true,
   "files": {
-    "research.zip": "22656292a9a8987afcd0fbf085e525814a6477f9b4a29fa21055b578da3677cb",
-    "foundation.zip": "3f64a4ae41134ac07ab8bfccb05ae77b13faa8dc2d1133452a8d4bad7cf74b5e",
-    "foundation.zip.minisig": "b94ad412162025cf29c9b64bc04746b368cc16a77bb50e19b6195376a89f52aa",
-    "release-signing.pub": "2295aaab3cb418c4f81a867a701a8187e8cdd0f73105a1f318c1faf981dfdb1a",
-    "README.md": "e3f532dfaf4c3c41abb02373a23edc32289a3da79d9428afd4226bef70fa1c3a"
+    "research.zip": "6fc52b5fd64a82f257277976be6ca30a9a96993e8d6e32abaef1d3166eede6ff",
+    "foundation.zip": "a1f34369cedec311d79228365ffd94bf6b08a228a2ef50fd5d3a5ddfb31a8d50",
+    "foundation.zip.minisig": "e41338b585588b0c9e04c851ad983b3401c2c5194f38f4e30fd1e36dee87720c",
+    "release-signing.pub": "2295aaab3cb418c4f81a867a701a8187e8cdd0f73105a1f318c1faf981dfdb1a"
   },
   "compatibility_pin_verified": true,
   "signature_status": "verified",
@@ -17,5 +16,7 @@
   "production_activation_allowed": false,
   "research_profile_qualification_inherited": false,
   "qualified_research_profiles": [],
-  "scope": "Pinned software/framework release only. Research results and depth profiles require independent qualification; partial and insufficient_evidence remain valid outcomes."
+  "scope": "Pinned software/framework release only. Research results and depth profiles require independent qualification; partial and insufficient_evidence remain valid outcomes.",
+  "release_tag": "v0.41.0a1-r153-v22",
+  "documentation_included": "documentation/"
 }

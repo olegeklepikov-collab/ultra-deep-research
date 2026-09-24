@@ -2,7 +2,7 @@
 
 [Home](../../README.md) · [Русский](../ru/workflows.md) · [Tool catalog](../reference/tools.md)
 
-Current development adds [model-class selection](model-classes.md); the release examples below remain scoped to r152.
+This r153/v22 release includes [model-class selection](model-classes.md); the examples below use its published workflow surface.
 
 ## Contract tools versus execution scripts
 
@@ -75,7 +75,7 @@ These are the initial plan constants, not promised completion times or current m
 | `result.json`, `result.md` where produced | Structured result and readable presentation |
 | `failure.json` and reconciliation records | Failure or uncertain outcome; whether a fresh external attempt is permissible |
 
-For papers, provide a document manifest with `document_id`, `title`, `url`, `path` and `read_scope` (`full_text` or the supported abstract form). Use the [tagged skill](https://github.com/olegeklepikov-collab/ultra-deep-research/tree/v0.41.0a1-r152-v21/skills/research) for the full per-script contract. PDF reading can be partial because of time, size, extraction or image limits; absence of an extracted visual element is not proof that the original page contains no meaningful figure, table or equation.
+For papers, provide a document manifest with `document_id`, `title`, `url`, `path` and `read_scope` (`full_text` or the supported abstract form). Use the [tagged skill](https://github.com/olegeklepikov-collab/ultra-deep-research/tree/v0.41.0a1-r153-v22/skills/research) for the full per-script contract. PDF reading can be partial because of time, size, extraction or image limits; absence of an extracted visual element is not proof that the original page contains no meaningful figure, table or equation.
 
 ## When to stop or reconcile
 

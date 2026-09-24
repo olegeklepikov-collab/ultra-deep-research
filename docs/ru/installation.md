@@ -2,7 +2,7 @@
 
 [Главная](../../README.ru.md) · [English](../en/installation.md)
 
-> Эти шаги воспроизводят подписанный r152. Выбор класса модели в текущей разработке описан отдельно: [классы моделей](model-classes.md).
+> Эти шаги воспроизводят подписанный выпуск r153/v22, включая [классы моделей](model-classes.md).
 
 ## Выберите состав развёртывания
 
@@ -25,11 +25,11 @@ Research предоставляет локальные контрактные и
 Используйте пустой каталог. Опубликованный архив неизменяем; хеши относятся к нему, а не к обновляемой документации.
 
 ```sh
-mkdir udr-r152-v21
-cd udr-r152-v21
-gh release download v0.41.0a1-r152-v21   --repo olegeklepikov-collab/ultra-deep-research   --pattern hermes-local-release-r152-v21.zip
-printf '%s  %s\n'   02c5032a8626d7a5ca782b78067530de83fe808a413dbbdf373850620e2cf334   hermes-local-release-r152-v21.zip | shasum -a 256 -c -
-unzip hermes-local-release-r152-v21.zip
+mkdir udr-r153-v22
+cd udr-r153-v22
+gh release download v0.41.0a1-r153-v22 --repo olegeklepikov-collab/ultra-deep-research
+shasum -a 256 -c SHA256SUMS
+unzip -n hermes-local-release-r153-v22.zip
 minisign -Vm foundation.zip -p release-signing.pub
 ```
 
@@ -37,17 +37,30 @@ minisign -Vm foundation.zip -p release-signing.pub
 
 ## Установка Research в новый экземпляр
 
-Выберите и подготовьте новый домашний каталог штатной настройкой Hermes. Переменные ниже должны указывать именно на него. Затем установите точный коммит выпуска:
+Выберите и подготовьте новый домашний каталог штатной настройкой Hermes. Переменные ниже должны указывать именно на него. Сначала настройте имя и электронную почту автора Git. Затем создайте локальный Git-источник из манифеста проверенного `research.zip` и установите этот точный локальный коммит:
 
 ```sh
 export HERMES_HOME="$HOME/.hermes-udr"
 export HERMES_FOUNDATION_ROOT="$HERMES_HOME/foundation"
-hermes plugins install olegeklepikov-collab/ultra-deep-research   --ref 9077d24d5e7b6dda5db7902bac2a927503791db6 --no-enable
+unzip -n research.zip -d research-source
+python3 - <<'PYCODE'
+import json
+import subprocess
+from pathlib import Path
+root = Path("research-source").resolve()
+manifest = json.loads((root / "bundle-manifest.json").read_text())
+files = [row["path"] for row in manifest["files"]] + ["bundle-manifest.json"]
+subprocess.run(["git", "-C", str(root), "init", "-b", "release"], check=True)
+subprocess.run(["git", "-C", str(root), "add", "--", *files], check=True)
+subprocess.run(["git", "-C", str(root), "commit", "-m", "Exact Research r153 package"], check=True)
+PYCODE
+UDR_SOURCE_REF="$(git -C research-source rev-parse HEAD)"
+hermes plugins install "file://$PWD/research-source" --ref "$UDR_SOURCE_REF" --no-enable
 hermes plugins doctor ultra-deep-research --ci
 hermes plugins enable ultra-deep-research --no-allow-tool-override
 ```
 
-Тег выпуска — `v0.41.0a1-r152-v21`. Полный коммит однозначно задаёт устанавливаемые исходники; основная ветка не является идентификатором этой поставки.
+Тег выпуска — `v0.41.0a1-r153-v22`. Локальный коммит выше создан из байтов архива и отличается от публичного исходного коммита. Установленный пакет задают перечисленные в манифесте файлы, а не изменяемое дерево репозитория или README.
 
 ## Авторизация и выбор модели
 
@@ -63,6 +76,13 @@ hermes auth add openai-codex --type oauth --label "UDR workstation"
 model:
   provider: openai-codex
   default: gpt-5.6-sol
+research:
+  default_model_class: balanced
+  model_classes:
+    balanced:
+      provider: openai-codex
+      model: gpt-5.6-sol
+      reasoning: low
 
 web:
   search_backend: keenable
@@ -77,7 +97,7 @@ web:
 
 Три значения `paid` исключают этих поставщиков из цепочки резервных обращений без ключей. Ограниченный процесс выбирает только Keenable и отключает резервное переключение. Такая настройка не создаёт учётные данные и не разрешает платные обращения к остальным поставщикам.
 
-Второй поддержанный ограниченный маршрут — `openrouter` с `openai/gpt-5.4-nano` и реквизитами OpenRouter, предоставленными оператором. Другие пары не принимаются автоматически ограниченным модельным обработчиком этой версии. Для него нужно отключить `fallback_model` и `fallback_providers`. Не меняйте настройки посреди запуска: перед следующими действиями проверяется их отпечаток.
+Метка `balanced` задаёт выбранный оператором маршрут, а не уровень качества. Класс можно связать с другой поддерживаемой Hermes и разрешённой парой поставщик/модель и совместимым уровнем рассуждения; фактический маршрут сохраняется и проверяется при запуске. Без таблицы классов используется загруженная настройка Hermes `model.provider` и `model.default`. Для ограниченных вызовов отключите `fallback_model` и `fallback_providers`. Не меняйте настройки посреди запуска: перед следующими действиями проверяется их отпечаток.
 
 OAuth-реквизиты остаются в закрытом хранилище выбранного домашнего каталога и не включаются в репозиторий. Запись `included` с нулевой оценкой отдельного вызова описывает подписочный учёт, а не отсутствие экономической стоимости всей работы.
 
@@ -96,7 +116,7 @@ manifest = json.loads((root / "bundle-manifest.json").read_text())
 files = [row["path"] for row in manifest["files"]] + ["bundle-manifest.json"]
 subprocess.run(["git", "-C", str(root), "init", "-b", "release"], check=True)
 subprocess.run(["git", "-C", str(root), "add", "--", *files], check=True)
-subprocess.run(["git", "-C", str(root), "commit", "-m", "Exact Foundation v21 package"], check=True)
+subprocess.run(["git", "-C", str(root), "commit", "-m", "Exact Foundation v22 package"], check=True)
 PYCODE
 UDR_FOUNDATION_REF="$(git -C foundation-source rev-parse HEAD)"
 hermes plugins install "file://$PWD/foundation-source" \
@@ -110,7 +130,7 @@ hermes plugins enable hermes-foundation-bridge --no-allow-tool-override
 1. Создайте новую копию исходников коммита Hermes из `bridge-lock.json`; примените включённую поправку в этой копии после проверки исходного хеша и `git apply --check`. Проверьте хеш исправленного файла Telegram.
 2. Создайте новые каталоги Foundation, профили, служебные идентификаторы, сети и тома Docker, локальные реквизиты. Подготовьте закреплённые компоненты SQL, памяти, графа и поиска.
 3. Сначала вызовите `foundation_bridge_migrate` с `apply=false`. Применяйте миграции только к выбранному новому каталогу, затем подготовьте необходимые профили, индекс, граф, память и Beads.
-4. Поместите ZIP Foundation, подпись и открытый ключ в `HERMES_FOUNDATION_ROOT/releases/hermes-foundation-bridge-0.12.0/` под именами из руководства выпуска. Вызовите `foundation_release_verify` с версией `0.12.0` и коммитом `a3305205a77ac7a10abbb7692076090106132559`.
+4. Поместите ZIP Foundation, подпись и открытый ключ в `HERMES_FOUNDATION_ROOT/releases/hermes-foundation-bridge-0.12.0/` под именами из руководства выпуска. Вызовите `foundation_release_verify` с версией `0.12.0` и коммитом `8dd99cca1755d2f7a6e8513b9e7a72bb23f52752`.
 5. Изучите `foundation_bridge_health`, завершите применимые проверки экземпляра и зафиксируйте отдельное решение оператора об активации. Включение расширения регистрирует инструменты, но не активирует производство.
 
 Это явные шаги развёртывания. Общий ZIP не является автоматическим установщиком или резервной копией рабочей среды автора.

@@ -2,7 +2,7 @@
 
 [Home](../../README.md) · [Русский](../ru/model-classes.md) · [Installation](installation.md)
 
-> Version boundary: this interface belongs to the current development source on `main`. The immutable published tag `v0.41.0a1-r152-v21` retains its two bounded concrete routes. This documentation update does not replace or re-sign that archive.
+> Version boundary: model classes are included in the r153/v22 release. The earlier r152/v21 tag remains immutable and retains its two bounded concrete routes.
 
 ## Stable requests, replaceable implementations
 
@@ -76,13 +76,4 @@ Time, token, call-count and cost-estimate checks remain in force. Subscription-i
 3. Complete or reconcile old attempts under their recorded conditions; start fresh invocations with the new mapping.
 4. Verify the affected capability and retain the new concrete route in its receipt. Preserve separate scientific qualification and release decisions.
 
-The published r152 installation recipe remains in [installation](installation.md). To evaluate model classes before the next packaged release, check out current `main`, record its full commit, and install that exact local Git source into an isolated Hermes home. This is a development-source installation, not the signed r152 bundle.
-
-Development `main` does not carry the old generated archive manifest. Release manifests remain available at immutable release refs and inside the published bundle.
-
-```sh
-git clone --branch main https://github.com/olegeklepikov-collab/ultra-deep-research.git udr-model-classes
-UDR_SOURCE_REF="$(git -C udr-model-classes rev-parse HEAD)"
-hermes plugins install "file://$PWD/udr-model-classes" --ref "$UDR_SOURCE_REF" --no-enable
-hermes plugins doctor ultra-deep-research --ci
-```
+The published r153/v22 [installation recipe](installation.md) includes model classes. The signed release bundle and its `documentation/` snapshot provide the version-matched instructions; the older r152/v21 archive remains unchanged.

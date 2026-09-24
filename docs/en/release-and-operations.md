@@ -1,18 +1,18 @@
 # Release, verification and operations
 
-[Home](../../README.md) · [Русский](../ru/release-and-operations.md) · [Published release](https://github.com/olegeklepikov-collab/ultra-deep-research/releases/tag/v0.41.0a1-r152-v21)
+[Home](../../README.md) · [Русский](../ru/release-and-operations.md) · [Published release](https://github.com/olegeklepikov-collab/ultra-deep-research/releases/tag/v0.41.0a1-r153-v22)
 
 ## Exact publication identity
 
-Tag: `v0.41.0a1-r152-v21` (**prerelease**). The public Research source commit is `9077d24d5e7b6dda5db7902bac2a927503791db6`. The Foundation source commit recorded in its signed manifest is `a3305205a77ac7a10abbb7692076090106132559`. Foundation source files are distributed in `foundation.zip`; no separate public Foundation repository is claimed here.
+Tag: `v0.41.0a1-r153-v22` (**prerelease**). The public Research source is the target of this immutable tag; resolve its full commit with `git rev-parse v0.41.0a1-r153-v22^{commit}` after fetching the tag. The Foundation source commit recorded in its signed manifest is `8dd99cca1755d2f7a6e8513b9e7a72bb23f52752`. Foundation source files are distributed in `foundation.zip`; no separate public Foundation repository is claimed here.
 
 | Artifact | Filename | SHA-256 |
 |---|---|---|
-| Combined ZIP | `hermes-local-release-r152-v21.zip` | `02c5032a8626d7a5ca782b78067530de83fe808a413dbbdf373850620e2cf334` |
-| Research r152 | `research.zip` | `22656292a9a8987afcd0fbf085e525814a6477f9b4a29fa21055b578da3677cb` |
-| Foundation v21 | `foundation.zip` | `3f64a4ae41134ac07ab8bfccb05ae77b13faa8dc2d1133452a8d4bad7cf74b5e` |
+| Combined ZIP | `hermes-local-release-r153-v22.zip` | See the release `SHA256SUMS` asset |
+| Research r153 | `research.zip` | `6fc52b5fd64a82f257277976be6ca30a9a96993e8d6e32abaef1d3166eede6ff` |
+| Foundation v22 | `foundation.zip` | `a1f34369cedec311d79228365ffd94bf6b08a228a2ef50fd5d3a5ddfb31a8d50` |
 
-The outer ZIP contains six files: `research.zip`, `foundation.zip`, `foundation.zip.minisig`, `release-signing.pub`, `manifest.json`, and `README.md`. **The Minisign signature covers Foundation.** The verified Foundation `bridge-lock.json` pins the Research ZIP hash. The outer ZIP is verified against its separately published hash. The manifest describes bundle members, not the mutable documentation tree on `main`.
+The outer ZIP contains `research.zip`, `foundation.zip`, `foundation.zip.minisig`, `release-signing.pub`, `manifest.json`, `README.md`, and a version-matched `documentation/` directory. **The Minisign signature covers Foundation.** The verified Foundation `bridge-lock.json` pins the Research ZIP hash. Verify the outer ZIP against the separate release `SHA256SUMS` asset. The manifest describes bundle members and the packaged documentation snapshot, not the mutable documentation tree on `main`.
 
 Only public release material is distributed. Working databases, private keys, OAuth tokens, gateway credentials, private logs and the operator's home directories are excluded. Updating this documentation does not change the signed archives or release tag.
 
@@ -21,23 +21,20 @@ Only public release material is distributed. Working databases, private keys, OA
 | Layer | Recorded evidence and limits |
 |---|---|
 | Packaging | Exact runtime members, checksums, license declaration, clean Foundation source binding and compatible Research pin |
-| Changed behavior | Addressed tests for model-route binding, Search planning constraints, short scientific identifiers and partial-source selection |
+| Changed behavior | Model-class routing checks in r153; bounded-route, Search-planning, short-identifier and source-selection checks inherited from r152 |
 | Installation | Public plugin entrypoints, exact installed bytes and plugin doctor; applicable update/rollback evidence retained |
 | Telegram/gateway | Controlled live ingress/egress, single-writer rejection, heartbeat progress and restart on an isolated local setup |
 | Recovery | Twelve state classes captured, restored and read back; individual recovery thresholds checked; a single overrun blocks the result |
 | Release trust | Minisign verification and native `foundation_release_verify`; `foundation_bridge_health` returned `integration_ready` |
-| Final Search | Normal `insufficient_evidence` completion with zero released claims; not positive scientific qualification |
+| Prior r152 Search smoke | Normal `insufficient_evidence` completion with zero released claims; inherited evidence, not an r153 scientific benchmark |
 
 Earlier inventories contain 44 bounded E2E executions and 862 indexed normative positions. Their counts do not mean 44 unrestricted live runs or 862 independent scientific acceptances. Each observation retains its version and scope. The prepared twenty-case FAIR corpus was not completed and is not a release-wide accuracy score.
 
-## Final stabilization in r152 / v21
+## Changes in r153 / v22
 
-- Select the bounded OpenRouter or Codex model route once and bind it to the attempt, worker and measured usage; reject disagreement or changed configuration.
-- Keep Codex subscription accounting explicit instead of treating a zero per-call estimate as proof of free research.
-- Make Search planning consistent with its web-only executor and declared limits.
-- Accept a short identifier such as `F1` only under the explicit supported rule and question binding, retaining secret/control-character checks.
-- Select a verified source consistently across drafting, assembly and reconciliation; retain missing and unreviewed leaves as partial coverage.
-- Pin the resulting Research archive in Foundation v21. Foundation runtime code is unchanged from v20; the paired Research pin and generated release manifest changed.
+- Research r153 adds operator-configured model classes with a bound concrete provider/model/reasoning route and recorded configuration fingerprint. A class label does not qualify its model or research results.
+- Foundation v22 pins the exact r153 archive. The combined ZIP adds a version-matched `documentation/` snapshot; the outer ZIP hash is published separately in `SHA256SUMS`.
+- The bounded-route, Search-planning, short-identifier and source-selection fixes from r152 remain part of the new package. They are inherited behavior, not new r153 scientific results.
 
 ## Runtime status vocabulary
 
@@ -60,7 +57,7 @@ The validation stand used a 24-hour recovery-point objective and a one-hour reco
 
 Its operator-managed job was configured every 12 hours, retained three automatic checkpoints, rejected concurrent execution, and treated state older than 24 hours as stale. Manual checkpoints were preserved. Restore was repeated after changed builds; changed configuration also invalidated the recorded runtime binding. A first actual scheduled-service execution and stale/concurrency checks were observed; a full longitudinal uptime guarantee was not established.
 
-**That local scheduling job is part of the validation stand, not an automatically installed feature of the six-file release bundle.** Foundation exposes inventory, objective and restore-assessment contracts. A deployment must provide its own backup execution, scheduling, retention and monitoring, following the component's `RECOVERY.md`. Do not treat `enabled` as evidence of a fresh successful backup.
+**That local scheduling job is part of the validation stand, not an automatically installed feature of the combined release bundle.** Foundation exposes inventory, objective and restore-assessment contracts. A deployment must provide its own backup execution, scheduling, retention and monitoring, following the component's `RECOVERY.md`. Do not treat `enabled` as evidence of a fresh successful backup.
 
 Keep operator secrets outside Git. Provision credentials deliberately for a new instance. Reusing a Telegram bot while another gateway is polling it creates a competing consumer; use a single owner and an explicit handover. Do not silently import prior memories, jobs or acceptance states during installation.
 
